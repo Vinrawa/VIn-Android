@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Kept in sync with VinDarkColors.background. -->
+    <color name="vin_window_background">#FF0A0C12</color>
+    <color name="vin_blue">#FF60A5FA</color>
+</resources>

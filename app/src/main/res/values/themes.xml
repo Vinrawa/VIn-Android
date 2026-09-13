@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.VinBrowser" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Edge-to-edge: Compose draws the bar scrims, icon appearance is
+             driven from VinBrowserTheme so it tracks the in-app theme. -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/vin_window_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

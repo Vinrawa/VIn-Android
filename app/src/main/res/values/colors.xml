@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Pre-Compose window background. Kept in sync with VinLightColors.background. -->
+    <color name="vin_window_background">#FFF8FAFC</color>
+    <color name="vin_blue">#FF2563EB</color>
+</resources>

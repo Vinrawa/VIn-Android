@@ -1,0 +1,43 @@
+# Built outputs
+build/
+app/build/
+.gradle/
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+*.swp
+
+# Local config
+local.properties
+
+# APKs (use releases, not repo)
+*.apk
+*.aab
+
+# Large zips
+full-project.zip
+vin-browser-android-core.zip
+*.zip
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Cache folders
+.cluster/
+.freebuff/
+qa-bot/
+
+# Screenshots (keep only target reference)
+screenshot*.png
+dump.xml
+
+# WhatsApp images (keep only the 2 target refs)
+# WhatsApp Image*.jpeg — keep these as target UI reference
+
+# Logs
+*.log
