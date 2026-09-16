@@ -8,8 +8,20 @@ data class BlockRule(
     val pattern: String,      // domain or substring, e.g. "doubleclick.net" or "/pagead/"
     val category: BlockCategory,
     val isDomainRule: Boolean, // true = match against request host, false = match against full URL
-    val thirdPartyOnly: Boolean = false // true = never block when request is first-party (same site as page)
-)
+    val thirdPartyOnly: Boolean = false,
+    val firstPartyOnly: Boolean = false,
+    val includedDomains: Set<String> = emptySet(),
+    val excludedDomains: Set<String> = emptySet()
+) {
+    private val matcher = if (isDomainRule) null else NetworkPattern(pattern)
+    fun matches(url: String, host: String, page: String, thirdParty: Boolean): Boolean {
+        if (thirdPartyOnly && !thirdParty || firstPartyOnly && thirdParty) return false
+        fun scoped(domain: String) = page == domain || page.endsWith(".$domain")
+        if (excludedDomains.any(::scoped)) return false
+        if (includedDomains.isNotEmpty() && includedDomains.none(::scoped)) return false
+        return if (isDomainRule) host == pattern || host.endsWith(".$pattern") else matcher!!.matches(url)
+    }
+}
 
 data class BlockResult(val rule: BlockRule)
 
@@ -56,13 +68,28 @@ class AdBlockEngine {
      * mid-request. Writers swap the whole snapshot under [reloadLock].
      */
     private data class RuleSet(
-        val domainRules: Map<String, Boolean>,     // "doubleclick.net" -> thirdPartyOnly
-        val patternRules: List<BlockRule>,         // substring rules
-        val popupDomains: Set<String>,             // $popup domain rules — block navigation
-        val popupPatterns: List<String>,           // $popup path patterns — block navigation
-        val cosmeticRules: Map<String, List<String>>,          // domain -> hide selectors
-        val cosmeticExceptions: Map<String, List<String>>      // domain -> exception selectors
+        val network: RuleIndex, val popup: RuleIndex,
+        val exceptions: RuleIndex, val popupExceptions: RuleIndex,
+        val cosmeticRules: Map<String, List<String>>,
+        val cosmeticExceptions: Map<String, List<String>>
     )
+
+    /** Domain rules stay O(host labels); only URL patterns need a literal scan. */
+    private class RuleIndex(rules: List<BlockRule>) {
+        private val domains = rules.filter { it.isDomainRule }.groupBy { it.pattern }
+        private val patterns = rules.filterNot { it.isDomainRule }.distinct()
+
+        fun candidates(host: String): Sequence<BlockRule> = sequence {
+            var probe = host
+            while (probe.isNotEmpty()) {
+                domains[probe]?.let { yieldAll(it) }
+                val dot = probe.indexOf('.')
+                if (dot < 0) break
+                probe = probe.substring(dot + 1)
+            }
+            yieldAll(patterns)
+        }
+    }
 
     private val reloadLock = Any()
 
@@ -100,20 +127,18 @@ class AdBlockEngine {
 
     private fun emptyCosmetic() = emptyMap<String, List<String>>()
 
-    // Bootstrap state: builtin rules, extended at runtime by asset/remote filter lists.
-    @Volatile private var ruleSet = RuleSet(
-        builtinDomains.associateWith { false }, builtinPatterns,
-        builtinPopupDomains, emptyList(), emptyCosmetic(), emptyCosmetic()
+    private var baseRules = FilterParseResult(
+        builtinDomains.map { BlockRule(it, categorize(it), true) } + builtinPatterns,
+        builtinPopupDomains.map { BlockRule(it, BlockCategory.AD, true) },
+        emptyCosmetic(), emptyCosmetic()
     )
-
-    // Base state (builtin + asset lists) that remote syncs rebuild on top of,
-    // so a fresh sync replaces previous remote rules instead of accumulating them.
-    private var baseDomains: Map<String, Boolean> = builtinDomains.associateWith { false }
-    private var basePatterns: List<BlockRule> = builtinPatterns
-    private var basePopupDomains: Set<String> = builtinPopupDomains
-    private var basePopupPatterns: List<String> = emptyList()
-    private var baseCosmetic: Map<String, List<String>> = emptyCosmetic()
-    private var baseCosmeticExceptions: Map<String, List<String>> = emptyCosmetic()
+    private var remoteRules = FilterListLoader.parse("")
+    @Volatile private var ruleSet = snapshot(baseRules)
+    private fun snapshot(result: FilterParseResult) = RuleSet(
+        RuleIndex(result.networkRules.distinct()), RuleIndex(result.popupRules.distinct()),
+        RuleIndex(result.networkExceptions.distinct()), RuleIndex(result.popupExceptions.distinct()),
+        result.cosmeticRules, result.cosmeticExceptions
+    )
 
     // hostname -> exact request URLs the user explicitly allowed on that site
     private val siteExceptions = ConcurrentHashMap<String, MutableSet<String>>()
@@ -136,85 +161,25 @@ class AdBlockEngine {
 
     fun loadRules(result: FilterParseResult) {
         synchronized(reloadLock) {
-            val domains = HashMap(baseDomains)
-            val patterns = ArrayList(basePatterns)
-            result.networkRules.forEach { rule ->
-                if (rule.isDomainRule) {
-                    domains[rule.pattern.lowercase()] = rule.thirdPartyOnly
-                } else if (patterns.size < 500) {
-                    patterns.add(rule)
-                }
-            }
-            baseDomains = domains
-            basePatterns = patterns
-            basePopupDomains = basePopupDomains + result.popupRules.filter { it.isDomainRule }.map { it.pattern.lowercase() }
-            basePopupPatterns = basePopupPatterns + result.popupRules.filter { !it.isDomainRule }.map { it.pattern }
-            baseCosmetic = mergeCosmetic(baseCosmetic, result.cosmeticRules)
-            baseCosmeticExceptions = mergeCosmetic(baseCosmeticExceptions, result.cosmeticExceptions)
-            ruleSet = buildRuleSet(domains, patterns, basePopupDomains, basePopupPatterns, baseCosmetic, baseCosmeticExceptions)
+            baseRules = FilterListLoader.merge(listOf(baseRules, result))
+            ruleSet = snapshot(FilterListLoader.merge(listOf(baseRules, remoteRules)))
         }
     }
-
-    /**
-     * Atomically swaps in a freshly-synced remote filter list on top of the current
-     * base state (builtin + asset lists). Called off the main thread by the worker;
-     * readers keep using the old snapshot until the swap completes.
-     */
+    /** Replace remote rules, retaining bundled rules and both exception sets. */
     fun replaceRemoteRules(result: FilterParseResult) {
         synchronized(reloadLock) {
-            val domains = HashMap(baseDomains)
-            val patterns = ArrayList(basePatterns)
-            result.networkRules.forEach { rule ->
-                if (rule.isDomainRule) {
-                    domains[rule.pattern.lowercase()] = rule.thirdPartyOnly
-                } else if (patterns.size < 500) {
-                    patterns.add(rule)
-                }
-            }
-            val popupDomains = basePopupDomains + result.popupRules.filter { it.isDomainRule }.map { it.pattern.lowercase() }
-            val popupPatterns = result.popupRules.filter { !it.isDomainRule }.map { it.pattern }
-            val cosmetic = mergeCosmetic(baseCosmetic, result.cosmeticRules)
-            val cosmeticExceptions = mergeCosmetic(baseCosmeticExceptions, result.cosmeticExceptions)
-            ruleSet = buildRuleSet(domains, patterns, popupDomains, popupPatterns, cosmetic, cosmeticExceptions)
+            remoteRules = result
+            ruleSet = snapshot(FilterListLoader.merge(listOf(baseRules, remoteRules)))
         }
-    }
-
-    private fun buildRuleSet(
-        domains: Map<String, Boolean>,
-        patterns: List<BlockRule>,
-        popupDomains: Set<String>,
-        popupPatterns: List<String>,
-        cosmetic: Map<String, List<String>>,
-        cosmeticExceptions: Map<String, List<String>>
-    ) = RuleSet(domains, patterns, popupDomains, popupPatterns, cosmetic, cosmeticExceptions)
-
-    private fun mergeCosmetic(
-        base: Map<String, List<String>>,
-        extra: Map<String, List<String>>
-    ): Map<String, List<String>> {
-        if (extra.isEmpty()) return base
-        val merged = HashMap<String, MutableList<String>>(base.mapValues { it.value.toMutableList() } as Map<String, MutableList<String>>)
-        extra.forEach { (domain, sels) ->
-            merged.getOrPut(domain) { mutableListOf() }.addAll(sels)
-        }
-        return merged
     }
 
     fun allowForSite(siteHost: String, requestUrl: String) {
-        siteExceptions.getOrPut(siteHost) { mutableSetOf() }.add(requestUrl)
+        siteExceptions.getOrPut(siteHost.lowercase()) { ConcurrentHashMap.newKeySet() }.add(requestUrl)
     }
 
-    fun disableForSite(siteHost: String) { siteDisabled[siteHost] = true }
-    fun enableForSite(siteHost: String) { siteDisabled.remove(siteHost) }
-    fun isSiteDisabled(siteHost: String): Boolean = siteDisabled[siteHost] == true
-
-    // First-party hosts of the bundled search engines. Even with correct filter
-    // parsing, a bad remote rule must never blank the user's search page.
-    private val searchEngineAllowlist = setOf(
-        "google.com", "bing.com", "duckduckgo.com", "brave.com", "startpage.com",
-        "yahoo.com", "qwant.com", "marginalia-search.com", "marginalia.nu",
-        "searx.be", "reddit.com", "ecosia.org", "mojeek.com"
-    )
+    fun disableForSite(siteHost: String) { siteDisabled[siteHost.lowercase()] = true }
+    fun enableForSite(siteHost: String) { siteDisabled.remove(siteHost.lowercase()) }
+    fun isSiteDisabled(siteHost: String): Boolean = siteDisabled[siteHost.lowercase()] == true
 
     /** Naive registrable domain: last two labels ("a.b.cdn.com" -> "cdn.com"). */
     private fun baseDomain(host: String): String {
@@ -223,94 +188,35 @@ class AdBlockEngine {
     }
 
     fun shouldBlock(requestUrl: String, requestHost: String, pageHost: String): BlockResult? {
-        if (!isGlobalAdBlockEnabled) return null
-        if (siteDisabled[pageHost] == true) return null
-        siteExceptions[pageHost]?.let { if (requestUrl in it) return null }
-
-        // Local immutable snapshot — safe to iterate even while a reload swaps ruleSet
+        val page = pageHost.lowercase()
+        if (!isGlobalAdBlockEnabled || isSiteDisabled(page)) return null
+        if (siteExceptions[page]?.contains(requestUrl) == true) return null
         val snapshot = ruleSet
         val host = requestHost.lowercase()
-
-        // Third-party = request site differs from the page site (used by $third-party rules)
-        val isThirdParty = pageHost.isNotBlank() && baseDomain(host) != baseDomain(pageHost)
-
-        // First-party requests to a search provider itself are never ad/tracker traffic.
-        // (Third-party calls, e.g. bat.bing.com fired from another site, stay blockable.)
-        if (!isThirdParty && (host in searchEngineAllowlist || baseDomain(host) in searchEngineAllowlist)) return null
-
-        // walk up subdomains: ads.doubleclick.net -> doubleclick.net -> net
-        var probe = host
-        while (probe.isNotEmpty()) {
-            val thirdPartyOnly = snapshot.domainRules[probe]
-            if (thirdPartyOnly != null) {
-                if (!thirdPartyOnly || isThirdParty) {
-                    val cat = categorize(probe)
-                    if (cat == BlockCategory.TRACKER && !isTrackerBlockEnabled) {
-                        // Tracker blocking toggle disabled
-                    } else {
-                        recordGlobalBlock(cat, pageHost)
-                        return BlockResult(BlockRule(probe, cat, true, thirdPartyOnly))
-                    }
-                }
-            }
-            val dot = probe.indexOf('.')
-            if (dot == -1) break
-            probe = probe.substring(dot + 1)
-        }
-
-        val urlLower = requestUrl.lowercase()
-        // Fast pre-filter: Only inspect pattern rules if URL contains ad/tracker path keywords
-        if (urlLower.contains("/ad") || urlLower.contains("pixel") || urlLower.contains("track") ||
-            urlLower.contains("telemetry") || urlLower.contains("analytics") || urlLower.contains("banner") ||
-            urlLower.contains("doubleclick") || urlLower.contains("pagead")) {
-            for (rule in snapshot.patternRules) {
-                if ((!rule.thirdPartyOnly || isThirdParty) && urlLower.contains(rule.pattern.lowercase())) {
-                    if (rule.category == BlockCategory.TRACKER && !isTrackerBlockEnabled) {
-                        continue
-                    }
-                    recordGlobalBlock(rule.category, pageHost)
-                    return BlockResult(rule)
-                }
+        val thirdParty = page.isNotBlank() && baseDomain(host) != baseDomain(page)
+        if (snapshot.exceptions.candidates(host).any { it.matches(requestUrl, host, page, thirdParty) }) return null
+        for (rule in snapshot.network.candidates(host)) {
+            if (rule.category == BlockCategory.TRACKER && !isTrackerBlockEnabled) continue
+            if (rule.matches(requestUrl, host, page, thirdParty)) {
+                recordGlobalBlock(rule.category, page)
+                return BlockResult(rule)
             }
         }
         return null
     }
 
-    /**
-     * Popup / redirect blocker: decides whether a NAVIGATION (main-frame load,
-     * popup window, or JS redirect) to [requestUrl] should be cancelled.
-     * Uses the $popup rule set + builtin redirect-network domains.
-     * Same-site navigations are never blocked — this only kills cross-site hijacks.
-     */
     fun shouldBlockPopup(requestUrl: String, requestHost: String, pageHost: String): Boolean {
-        if (!isGlobalAdBlockEnabled) return false
-        if (pageHost.isNotBlank() && siteDisabled[pageHost] == true) return false
         val host = requestHost.lowercase()
-        if (host.isEmpty()) return false
-
-        // Navigating within the current site is always legitimate
-        if (pageHost.isNotBlank() && baseDomain(host) == baseDomain(pageHost)) return false
-
+        val page = pageHost.lowercase()
+        if (!isGlobalAdBlockEnabled || isSiteDisabled(page) || host.isEmpty()) return false
+        if (siteExceptions[page]?.contains(requestUrl) == true) return false
+        val thirdParty = page.isNotBlank() && baseDomain(host) != baseDomain(page)
+        if (page.isNotBlank() && !thirdParty) return false
         val snapshot = ruleSet
-
-        // Domain walk-up: ads.popcash.net -> popcash.net
-        var probe = host
-        while (probe.isNotEmpty()) {
-            if (probe in snapshot.popupDomains) {
-                recordGlobalBlock(BlockCategory.AD, pageHost)
-                return true
-            }
-            val dot = probe.indexOf('.')
-            if (dot == -1) break
-            probe = probe.substring(dot + 1)
-        }
-
-        val urlLower = requestUrl.lowercase()
-        for (pattern in snapshot.popupPatterns) {
-            if (urlLower.contains(pattern)) {
-                recordGlobalBlock(BlockCategory.AD, pageHost)
-                return true
-            }
+        if (snapshot.popupExceptions.candidates(host).any { it.matches(requestUrl, host, page, thirdParty) }) return false
+        if (snapshot.popup.candidates(host).any { it.matches(requestUrl, host, page, thirdParty) }) {
+            recordGlobalBlock(BlockCategory.AD, page)
+            return true
         }
         return false
     }
@@ -321,7 +227,7 @@ class AdBlockEngine {
      * parent suffix) and removes exception (#@#) selectors. Capped for safety.
      */
     fun getCosmeticSelectors(pageDomain: String): List<String> {
-        if (!isGlobalAdBlockEnabled || !isCosmeticFilterEnabled) return emptyList()
+        if (!isGlobalAdBlockEnabled || !isCosmeticFilterEnabled || isSiteDisabled(pageDomain)) return emptyList()
         val d = pageDomain.removePrefix("www.").lowercase()
         if (d.isBlank() || d.isEmpty()) return emptyList()
         val snapshot = ruleSet

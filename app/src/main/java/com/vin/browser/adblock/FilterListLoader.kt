@@ -7,7 +7,9 @@ data class FilterParseResult(
     val networkRules: List<BlockRule>,               // request-level blocking rules
     val popupRules: List<BlockRule>,                 // $popup rules — block navigations/popups
     val cosmeticRules: Map<String, List<String>>,    // domain -> element-hiding CSS selectors
-    val cosmeticExceptions: Map<String, List<String>> // domain -> exception selectors (#@#)
+    val cosmeticExceptions: Map<String, List<String>>, // domain -> exception selectors (#@#)
+    val networkExceptions: List<BlockRule> = emptyList(),
+    val popupExceptions: List<BlockRule> = emptyList()
 )
 
 object FilterListLoader {
@@ -31,108 +33,64 @@ object FilterListLoader {
             r.cosmeticRules.forEach { (d, sels) -> cosmetic.getOrPut(d) { mutableListOf() }.addAll(sels) }
             r.cosmeticExceptions.forEach { (d, sels) -> exceptions.getOrPut(d) { mutableListOf() }.addAll(sels) }
         }
-        return FilterParseResult(network, popup, cosmetic, exceptions)
+        return FilterParseResult(network, popup, cosmetic, exceptions,
+            results.flatMap { it.networkExceptions }, results.flatMap { it.popupExceptions })
     }
 
-    // Parses a pragmatic subset of Adblock Plus filter syntax:
-    //   ||domain.com^                  -> network domain rule (all requests)
-    //   ||domain.com^$third-party      -> network domain rule (third-party requests only)
-    //   ||domain.com^$popup            -> POPUP rule: navigation to this domain is blocked
-    //   /some/path/fragment            -> substring pattern rule
-    //   domain1,domain2##selector      -> cosmetic: hide element on those domains
-    //   domain#@#selector              -> cosmetic exception: never hide
-    //   ! comment / [header] / @@allow / ##generic -> skipped
-    //
-    // SAFETY RULES (learned the hard way — whole-domain breakage):
-    //   1. `||domain.com^*/path$opts` (path after the ^ separator) is a PATH rule.
-    //      Truncating at '^' must NEVER become a bare domain rule — that blocked
-    //      entire sites like bing.com, startpage.com, cloudfront.net, akamai.net.
-    //   2. `$domain=...` rules are site-scoped; skipped (we can't honor the scope).
-    //   3. `$third-party` is honored via BlockRule.thirdPartyOnly.
+    /**
+     * Safe subset: URL/domain anchors, *, ^, @@, domain=, party constraints, popup.
+     * Unsupported options (including resource types) are skipped, not broadened.
+     * This is not a full ABP implementation.
+     */
     fun parse(rawText: String): FilterParseResult {
         val network = mutableListOf<BlockRule>()
         val popup = mutableListOf<BlockRule>()
         val cosmetic = mutableMapOf<String, MutableList<String>>()
         val exceptions = mutableMapOf<String, MutableList<String>>()
-
+        val networkExceptions = mutableListOf<BlockRule>()
+        val popupExceptions = mutableListOf<BlockRule>()
         rawText.lineSequence().forEach { rawLine ->
             val line = rawLine.trim()
             if (line.isEmpty() || line.startsWith("!") || line.startsWith("[")) return@forEach
-            if (line.startsWith("@@")) return@forEach
-
-            // ---- Cosmetic rules (element hiding) ----
             if (line.contains("##") || line.contains("#@#") || line.contains("#?#")) {
                 parseCosmeticLine(line, cosmetic, exceptions)
                 return@forEach
             }
-
-            if (line.startsWith("||")) {
-                parseDomainRule(line.removePrefix("||"))?.let { (rule, isPopup) ->
-                    if (isPopup) popup.add(rule) else network.add(rule)
-                }
-            } else {
-                parsePatternRule(line)?.let { (rule, isPopup) ->
-                    if (isPopup) popup.add(rule) else network.add(rule)
-                }
+            val exception = line.startsWith("@@")
+            val (rule, isPopup) = parseNetworkRule(line.removePrefix("@@")) ?: return@forEach
+            when {
+                exception && isPopup -> popupExceptions.add(rule)
+                exception -> networkExceptions.add(rule)
+                isPopup -> popup.add(rule)
+                else -> network.add(rule)
             }
         }
-        return FilterParseResult(network, popup, cosmetic, exceptions)
+        return FilterParseResult(network, popup, cosmetic, exceptions, networkExceptions, popupExceptions)
     }
 
-    /**
-     * Handles: domain.com^ | domain.com^$opts | domain.com$opts | domain.com
-     * Returns null when the rule carries a path (after ^ or inside the body)
-     * or options this engine cannot honor.
-     */
-    private fun parseDomainRule(body: String): Pair<BlockRule, Boolean>? {
-        val lowered = body.lowercase()
-        val domainPart = lowered.substringBefore("^").substringBefore("$")
+    private val domainSyntax = Regex("[a-z0-9_-]+(?:\\.[a-z0-9_-]+)*")
+    private val supportedOptions = setOf("third-party", "3p", "~third-party", "~3p", "first-party", "1p", "popup")
 
-        // Reject anything with a path embedded (||foo.com/bar^, ||foo.com/sp/$ping)
-        if (domainPart.isEmpty() || domainPart.contains("/")) return null
-
-        // After a '^' separator only options ($...) may follow. Anything else
-        // (including "*") means the rule targets specific paths — skip it.
-        val caretIdx = lowered.indexOf('^')
-        if (caretIdx != -1) {
-            val afterCaret = lowered.substring(caretIdx + 1)
-            if (afterCaret.isNotEmpty() && !afterCaret.startsWith("$")) return null
-        }
-
-        val options = lowered.substringAfter("$", "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
-
-        val isPopup = options.any { it == "popup" }
-        if (!isPopup) {
-            // Site-scoped rules can't be honored — skipping is safer than over-blocking
-            if (options.any { it.startsWith("domain=") }) return null
-            // ~third-party = first-party only, can't be honored correctly
-            if (options.any { it == "~third-party" }) return null
-        }
-
-        val thirdPartyOnly = options.any { it == "third-party" || it == "3p" }
-        return BlockRule(domainPart, guessCategory(domainPart), isDomainRule = true, thirdPartyOnly = thirdPartyOnly) to isPopup
-    }
-
-    private fun parsePatternRule(line: String): Pair<BlockRule, Boolean>? {
-        val lowered = line.lowercase()
-        val pattern = lowered.substringBefore("$")
-        if (pattern.isEmpty()) return null
-
-        val options = lowered.substringAfter("$", "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
-        val isPopup = options.any { it == "popup" }
-
-        if (!isPopup) {
-            if (options.any { it.startsWith("domain=") }) return null
-            if (options.any { it == "~third-party" }) return null
-        } else {
-            // Popup pattern rules must look path-ish to be safely applied to
-            // navigations; bare short substrings cause false positives.
-            if (pattern.length < 8) return null
-            if (!pattern.any { it == '/' || it == '?' || it == '=' }) return null
-        }
-
-        val thirdPartyOnly = options.any { it == "third-party" || it == "3p" }
-        return BlockRule(pattern, guessCategory(pattern), isDomainRule = false, thirdPartyOnly = thirdPartyOnly) to isPopup
+    private fun parseNetworkRule(line: String): Pair<BlockRule, Boolean>? {
+        val pattern = line.substringBefore('$').lowercase()
+        if (pattern.isBlank() || pattern.none { it.isLetterOrDigit() }) return null
+        // Regex filters and non-network extension syntax are not supported.
+        if (pattern.contains('#') || pattern.contains('\\') || pattern.contains('[')) return null
+        val options = line.substringAfter('$', "").lowercase().split(',').filter { it.isNotEmpty() }
+        if (options.any { it !in supportedOptions && !it.startsWith("domain=") }) return null
+        val domains = options.filter { it.startsWith("domain=") }.flatMap { it.removePrefix("domain=").split('|') }
+        if (domains.any { !domainSyntax.matches(it.removePrefix("~")) }) return null
+        val thirdParty = options.any { it == "third-party" || it == "3p" }
+        val firstParty = options.any { it in setOf("~third-party", "~3p", "first-party", "1p") }
+        if (thirdParty && firstParty) return null
+        val bareDomain = if (pattern.startsWith("||") && pattern.endsWith('^')) pattern.removePrefix("||").dropLast(1) else ""
+        val isDomain = bareDomain.contains('.') && domainSyntax.matches(bareDomain)
+        return BlockRule(
+            if (isDomain) bareDomain else pattern, guessCategory(pattern), isDomain,
+            thirdParty, firstParty,
+            domains.filterNot { it.startsWith('~') }.toSet(),
+            domains.filter { it.startsWith('~') }.map { it.drop(1) }.toSet()
+        ) to ("popup" in options)
     }
 
     /**
