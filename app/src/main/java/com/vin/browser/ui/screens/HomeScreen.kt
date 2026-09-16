@@ -63,7 +63,7 @@ fun HomeScreen(
             .fillMaxSize()
             .background(scheme.background)
     ) {
-        // ── Compact Top Bar: G logo + Search + Mic + QR + VPN ──
+        // ── Compact Top Bar: engine icon + omnibox + mic + QR ──
         Surface(
             color = scheme.surfaceContainerHigh,
             modifier = Modifier.fillMaxWidth()
@@ -121,24 +121,6 @@ fun HomeScreen(
                     )
                 }
 
-                // VPN button
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = Color.Transparent,
-                    border = BorderStroke(1.dp, scheme.onSurfaceVariant),
-                    modifier = Modifier.clickable { /* VPN toggle */ }
-                ) {
-                    Text(
-                        text = "VPN",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = scheme.onSurfaceVariant,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(
-                            horizontal = Space.sm,
-                            vertical = Space.xs
-                        )
-                    )
-                }
             }
         }
 
