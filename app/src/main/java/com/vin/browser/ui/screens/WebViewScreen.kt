@@ -312,6 +312,33 @@ fun WebViewScreen(
                         )
 
                         webChromeClient = object : WebChromeClient() {
+                            // target=_blank links: extract the URL and open it in a
+                            // background tab instead of silently doing nothing.
+                            override fun onCreateWindow(
+                                view: WebView?,
+                                isDialog: Boolean,
+                                isUserGesture: Boolean,
+                                resultMsg: android.os.Message?
+                            ): Boolean {
+                                val temp = WebView(context).apply { settings.javaScriptEnabled = true }
+                                temp.webViewClient = object : WebViewClient() {
+                                    override fun shouldOverrideUrlLoading(
+                                        v: WebView?,
+                                        request: WebResourceRequest?
+                                    ): Boolean {
+                                        val url = request?.url?.toString() ?: return false
+                                        onOpenInBackgroundTab(url)
+                                        v?.destroy()
+                                        return true
+                                    }
+                                }
+                                // WebView hands us the transport to grab the target URL
+                                val transport = resultMsg?.obj as? WebView.WebViewTransport
+                                transport?.webView = temp
+                                resultMsg?.sendToTarget()
+                                return true
+                            }
+
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 onProgressCallback(newProgress)
                                 localProgress = newProgress
