@@ -109,8 +109,12 @@ fun WebViewScreen(
     onPageStarted: (String) -> Unit,
     onPageFinished: (String, String, SslCertificate?, Bitmap?) -> Unit,
     onTrackerBlocked: () -> Unit,
+    onOpenInBackgroundTab: (String) -> Unit = {},
+    onOpenInForegroundTab: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    var linkTarget by remember { mutableStateOf<com.vin.browser.ui.components.LinkTarget?>(null) }
+    val onLinkContext: (com.vin.browser.ui.components.LinkTarget) -> Unit = { linkTarget = it }
     var currentWebView by remember { mutableStateOf<WebView?>(null) }
     val currentSettings by rememberUpdatedState(siteSettings)
     val scheme = MaterialTheme.colorScheme
@@ -231,6 +235,23 @@ fun WebViewScreen(
                         // Find in Page listener
                         setFindListener { activeMatchOrdinal, numberOfMatches, _ ->
                             onFindResult(activeMatchOrdinal, numberOfMatches)
+                        }
+
+                        // Long-press on links/images opens the link context menu
+                        setOnLongClickListener { v ->
+                            val result = (v as? WebView)?.hitTestResult ?: return@setOnLongClickListener false
+                            val target = when (result.type) {
+                                WebView.HitTestResult.SRC_ANCHOR_TYPE ->
+                                    result.extra?.let { com.vin.browser.ui.components.LinkTarget(it) }
+                                WebView.HitTestResult.IMAGE_TYPE,
+                                WebView.HitTestResult.SRC_IMAGE_ANCHOR_TYPE ->
+                                    result.extra?.let { com.vin.browser.ui.components.LinkTarget(it, it) }
+                                else -> null
+                            }
+                            if (target != null) {
+                                onLinkContext(target)
+                                true
+                            } else false
                         }
 
                         // Download Listener
@@ -586,5 +607,34 @@ fun WebViewScreen(
         if (findPrevTrigger > 0) {
             currentWebView?.findNext(false)
         }
+    }
+
+    // Long-press link/image context menu
+    linkTarget?.let { target ->
+        com.vin.browser.ui.components.LinkContextSheet(
+            target = target,
+            onDismiss = { linkTarget = null },
+            onOpenInNewTab = { u -> onOpenInForegroundTab(u) },
+            onOpenInBackground = { u -> onOpenInBackgroundTab(u) },
+            onDownload = { u ->
+                currentWebView?.post {
+                    try {
+                        val filename = URLUtil.guessFileName(u, null, null)
+                        val request = DownloadManager.Request(Uri.parse(u)).apply {
+                            setMimeType("application/octet-stream")
+                            setTitle(filename)
+                            setDescription("Downloading file...")
+                            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                            setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
+                        }
+                        val dm = currentWebView!!.context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                        dm.enqueue(request)
+                        Toast.makeText(currentWebView!!.context, "Download started...", Toast.LENGTH_SHORT).show()
+                    } catch (_: Exception) {
+                        Toast.makeText(currentWebView?.context, "Download error", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+        )
     }
 }

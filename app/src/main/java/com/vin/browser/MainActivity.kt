@@ -332,8 +332,8 @@ fun VinBrowserRoot(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         modifier = Modifier.fillMaxSize()
-    ) { _ ->
-        Box(modifier = Modifier.fillMaxSize()) {
+    ) { contentPadding ->
+        Box(modifier = Modifier.fillMaxSize().padding(contentPadding)) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -451,6 +451,8 @@ fun VinBrowserRoot(
                                         vm.onPageFinished(title, url, cert, icon)
                                     },
                                     onTrackerBlocked = { vm.refreshTrackerCount() },
+                                    onOpenInBackgroundTab = { backgroundUrl -> vm.openInBackgroundTab(backgroundUrl) },
+                                    onOpenInForegroundTab = { newTabUrl -> vm.openInNewTab(newTabUrl) },
                                     modifier = Modifier.fillMaxSize()
                                 )
                             }

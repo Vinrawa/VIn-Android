@@ -377,6 +377,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         val domain = extractDomain(finalUrl)
         _currentDomain.value = domain
         _siteSettings.value = storage.getSiteSettings(domain)
+        applySiteAdBlockSetting(domain, _siteSettings.value)
         _trustInfo.value = TrustEvaluator.evaluate(finalUrl, null)
         _trackersBlocked.value = AdBlockEngine.instance.getSiteBlockedCount(domain)
 
@@ -413,6 +414,16 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         val domain = _currentDomain.value
         if (domain.isNotBlank()) {
             storage.saveSiteSettings(domain, settings)
+            applySiteAdBlockSetting(domain, settings)
+        }
+    }
+
+    private fun applySiteAdBlockSetting(domain: String, settings: SiteControlSettings) {
+        if (domain.isBlank()) return
+        if (settings.adsBlocked) {
+            AdBlockEngine.instance.enableForSite(domain)
+        } else {
+            AdBlockEngine.instance.disableForSite(domain)
         }
     }
 
@@ -512,6 +523,34 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         hibernateExcessTabs()
     }
 
+    /**
+     * Opens [url] in a new tab without switching to it ("Open in background").
+     * The tab joins the tab list as-is; WebView creation happens when the user
+     * switches to it, matching the single-live-WebView architecture.
+     */
+    fun openInBackgroundTab(url: String): String {
+        val isIncognito = getActiveTab()?.isIncognito == true
+        val newTab = TabState(
+            id = UUID.randomUUID().toString(),
+            title = extractDomain(url),
+            url = url,
+            isHome = false,
+            isIncognito = isIncognito,
+            isLoading = false
+        )
+        _tabs.value = _tabs.value + newTab
+        hibernateExcessTabs()
+        return newTab.id
+    }
+
+    /** Opens [url] in a fresh tab and switches to it. */
+    fun openInNewTab(url: String) {
+        val id = openInBackgroundTab(url)
+        switchTab(id)
+        loadNonce++
+        _loadEvent.value = loadNonce to url
+    }
+
     fun addIncognitoTab() {
         val newTab = TabState(id = UUID.randomUUID().toString(), isIncognito = true)
         _tabs.value = _tabs.value + newTab
@@ -543,6 +582,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
                 val domain = extractDomain(tab.url)
                 _currentDomain.value = domain
                 _siteSettings.value = storage.getSiteSettings(domain)
+                applySiteAdBlockSetting(domain, _siteSettings.value)
                 _trustInfo.value = TrustEvaluator.evaluate(tab.url, null)
                 _trackersBlocked.value = AdBlockEngine.instance.getSiteBlockedCount(domain)
 
