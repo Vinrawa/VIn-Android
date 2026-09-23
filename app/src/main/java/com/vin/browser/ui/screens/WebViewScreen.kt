@@ -15,6 +15,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.webkit.*
 import android.widget.Toast
+import androidx.webkit.UserAgentMetadata
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
 import androidx.activity.compose.BackHandler
@@ -75,6 +76,64 @@ private const val MOBILE_USER_AGENT =
 
 private const val DESKTOP_USER_AGENT =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+private const val UA_CHROME_MAJOR = "128"
+private const val UA_CHROME_FULL = "128.0.0.0"
+
+/**
+ * Applies the User-Agent for the requested mode AND the matching UA Client Hints.
+ *
+ * Overriding only [WebSettings.userAgentString] leaves the low-entropy client
+ * hints (Sec-CH-UA, Sec-CH-UA-Mobile, Sec-CH-UA-Platform) and
+ * navigator.userAgentData at their device defaults. Modern sites (Google,
+ * YouTube, Reddit, Amazon, ...) prefer those over the UA string, so the two
+ * sources disagreed and sites picked the wrong layout: desktop mode was
+ * ignored on some sites while others rendered desktop even in mobile mode.
+ * Keeping UA string and metadata in sync fixes both directions.
+ *
+ * @return true if the UA string actually changed (caller should reload).
+ */
+private fun applyUserAgent(webView: WebView, desktop: Boolean): Boolean {
+    val targetUa = if (desktop) DESKTOP_USER_AGENT else MOBILE_USER_AGENT
+    val changed = webView.settings.userAgentString != targetUa
+    if (changed) {
+        webView.settings.userAgentString = targetUa
+    }
+    if (WebViewFeature.isFeatureSupported(WebViewFeature.USER_AGENT_METADATA)) {
+        try {
+            val brands = listOf(
+                UserAgentMetadata.BrandVersion.Builder()
+                    .setBrand("Chromium")
+                    .setMajorVersion(UA_CHROME_MAJOR)
+                    .setFullVersion(UA_CHROME_FULL)
+                    .build(),
+                UserAgentMetadata.BrandVersion.Builder()
+                    .setBrand("Google Chrome")
+                    .setMajorVersion(UA_CHROME_MAJOR)
+                    .setFullVersion(UA_CHROME_FULL)
+                    .build(),
+                UserAgentMetadata.BrandVersion.Builder()
+                    .setBrand("Not;A=Brand")
+                    .setMajorVersion("24")
+                    .setFullVersion("24.0.0.0")
+                    .build()
+            )
+            val metadata = UserAgentMetadata.Builder()
+                .setBrandVersionList(brands)
+                .setFullVersion(UA_CHROME_FULL)
+                .setPlatform(if (desktop) "Windows" else "Android")
+                .setPlatformVersion(if (desktop) "10.0.0" else "14.0.0")
+                .setArchitecture(if (desktop) "x86" else "")
+                .setModel(if (desktop) "" else "K")
+                .setMobile(!desktop)
+                .setBitness(if (desktop) 64 else UserAgentMetadata.BITNESS_DEFAULT)
+                .setWow64(false)
+                .build()
+            WebSettingsCompat.setUserAgentMetadata(webView.settings, metadata)
+        } catch (_: Exception) { }
+    }
+    return changed
+}
 
 /**
  * Forced AMOLED Dark Mode for webpages.
@@ -301,9 +360,10 @@ fun WebViewScreen(
                             }
                             loadsImagesAutomatically = currentSettings.imagesEnabled && !isLiteMode
                             blockNetworkImage = !currentSettings.imagesEnabled || isLiteMode
-
-                            userAgentString = if (currentSettings.desktopMode) DESKTOP_USER_AGENT else MOBILE_USER_AGENT
                         }
+
+                        // UA string + matching Client Hints (mobile/desktop mode)
+                        applyUserAgent(this, currentSettings.desktopMode)
 
                         if (isIncognito) {
                             // Deprecated no-op in modern WebView but harmless; form data must not persist in private mode
@@ -510,9 +570,8 @@ fun WebViewScreen(
                         webView.settings.cacheMode = targetCache
                     }
 
-                    val targetUa = if (currentSettings.desktopMode) DESKTOP_USER_AGENT else MOBILE_USER_AGENT
-                    if (webView.settings.userAgentString != targetUa) {
-                        webView.settings.userAgentString = targetUa
+                    // Desktop/mobile toggle: UA string + Client Hints, reload only on change
+                    if (applyUserAgent(webView, currentSettings.desktopMode)) {
                         webView.reload()
                     }
 
