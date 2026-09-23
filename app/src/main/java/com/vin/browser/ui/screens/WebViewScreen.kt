@@ -56,20 +56,25 @@ import com.vin.browser.ui.theme.Space
 import kotlin.math.abs
 
 /**
- * Hard-coded modern UAs (same Chrome version for both modes).
+ * Hard-coded UAs, same Chrome version for both modes (Chrome/128).
  *
  * Why not WebSettings.getDefaultUserAgent() for mobile? The device's WebView
  * version varies wildly (budget/OEM devices ship Chrome 7x-9x or vendor UAs);
  * YouTube serves its LEGACY mobile frontend to those UAs, which renders with a
  * stretched player, dead 3-dot menus and a broken comment section ("old Google"
- * look). A pinned current Chrome UA makes YouTube serve the current polymer
- * mobile UI in every WebView. Desktop mode already used a pinned UA and worked.
+ * look). A pinned current-ish Chrome UA makes YouTube serve the current polymer
+ * mobile UI in every WebView.
+ *
+ * Why 128 and not the newest? 128 is empirically proven on this app: desktop
+ * mode always shipped this claim and the user confirmed YouTube desktop works.
+ * Over-claiming far ahead of the actual engine (e.g. 140) risks YouTube serving
+ * bundles that use APIs the real WebView lacks. Stay at the proven version.
  */
 private const val MOBILE_USER_AGENT =
-    "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+    "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
 
 private const val DESKTOP_USER_AGENT =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
 /**
  * Forced AMOLED Dark Mode for webpages.
@@ -394,6 +399,14 @@ fun WebViewScreen(
                                     currentWebView?.evaluateJavascript(
                                         "document.querySelectorAll('video, audio').forEach(el => el.muted = true);",
                                         null
+                                    )
+                                }
+                                // Volume Boost: re-assert on every finished document so
+                                // SPA navigations (YouTube) keep the gain graph installed.
+                                if (currentSettings.volumeBoost) {
+                                    com.vin.browser.engine.VolumeBoost.inject(
+                                        this,
+                                        com.vin.browser.engine.VolumeBoost.DEFAULT_GAIN
                                     )
                                 }
                                 // Capture card thumbnail preview for Tab Tray (never in incognito)

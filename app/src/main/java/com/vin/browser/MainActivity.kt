@@ -326,16 +326,23 @@ fun VinBrowserRoot(
         val currentUrl = webViewUrl
         if (!currentUrl.startsWith("http")) {
             Toast.makeText(context, "Open a page first", Toast.LENGTH_SHORT).show()
+        } else if (currentUrl.contains(".translate.goog/")) {
+            // Already a translated page -- re-translating would corrupt the proxy URL
+            Toast.makeText(context, "Page is already translated", Toast.LENGTH_SHORT).show()
         } else {
             try {
                 val uri = java.net.URI(currentUrl)
                 val host = uri.host ?: throw IllegalArgumentException("no host")
                 val path = uri.rawPath ?: ""
                 val query = uri.rawQuery
-                val base = "https://" + host.replace(".", "-") + ".translate.goog" + path + (if (query != null) "?$query" else "")
+                // translate.goog host scheme: literal hyphens are escaped by DOUBLING
+                // them first (my--site), then dots become single hyphens. Without the
+                // doubling, hosts like my-site.com decode to the wrong origin.
+                val escapedHost = host.replace("-", "--").replace(".", "-")
+                val base = "https://" + escapedHost + ".translate.goog" + path + (if (query != null) "?$query" else "")
                 val sep = if (query != null) "&" else "?"
                 vm.setTranslateLang(code)
-                vm.navigateToUrl(base + sep + "_x_tr_sl=auto&_x_tr_tl=" + code + "&_x_tr_hl=en")
+                vm.navigateToUrl(base + sep + "_x_tr_sl=auto&_x_tr_tl=" + code + "&_x_tr_hl=en&_x_tr_pto=wapp")
             } catch (_: Exception) {
                 Toast.makeText(context, "Could not translate this page", Toast.LENGTH_SHORT).show()
             }
@@ -634,6 +641,7 @@ fun VinBrowserRoot(
             incognitoCount = tabs.count { it.isIncognito },
             onTabClick = { vm.switchTab(it) },
             onCloseTab = { vm.closeTab(it) },
+            onTogglePin = { vm.toggleTabPin(it) },
             onCloseAllTabs = {
                 val backup = vm.closeAllTabs()
                 coroutineScope.launch {
@@ -755,6 +763,52 @@ fun VinBrowserRoot(
                 vm.dismissMenu()
                 showTranslateDialog = true
             },
+            onSavePdf = {
+                vm.dismissMenu()
+                val pdfWebView = activeWebView
+                if (pdfWebView == null) {
+                    Toast.makeText(context, "Open a page first", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Preparing PDF...", Toast.LENGTH_SHORT).show()
+                    com.vin.browser.engine.PdfExporter.export(
+                        context,
+                        pdfWebView,
+                        currentTab?.title ?: "page"
+                    ) { msg ->
+                        if (msg != null) {
+                            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                        } else {
+                            // Silent export failed -> system print dialog with the
+                            // built-in "Save as PDF" destination as fallback.
+                            try {
+                                val attrs = android.print.PrintAttributes.Builder()
+                                    .setMediaSize(android.print.PrintAttributes.MediaSize.ISO_A4)
+                                    .build()
+                                val printManager = context.getSystemService(Context.PRINT_SERVICE) as android.print.PrintManager
+                                printManager.print("ViN PDF", pdfWebView.createPrintDocumentAdapter("ViN PDF"), attrs)
+                            } catch (_: Exception) {
+                                Toast.makeText(context, "Could not create PDF", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                }
+            },
+            isVolumeBoost = siteSettings.volumeBoost,
+            onVolumeBoostToggle = {
+                val updated = siteSettings.copy(volumeBoost = !siteSettings.volumeBoost)
+                vm.updateSiteSettings(updated)
+                val wv = activeWebView
+                if (wv != null) {
+                    if (updated.volumeBoost) {
+                        // Graph arms after the next tap on the page (gesture gating)
+                        com.vin.browser.engine.VolumeBoost.inject(wv, com.vin.browser.engine.VolumeBoost.DEFAULT_GAIN)
+                        Toast.makeText(context, "Volume Boost 2x ON for this site (tap the page once)", Toast.LENGTH_SHORT).show()
+                    } else {
+                        com.vin.browser.engine.VolumeBoost.inject(wv, 1.0f)
+                        Toast.makeText(context, "Volume Boost OFF", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
             onSettingsClick = {
                 vm.dismissMenu()
                 vm.togglePrivacyDashboard()
@@ -793,13 +847,57 @@ fun VinBrowserRoot(
                     val canvas = android.graphics.Canvas(bitmap)
                     webView.draw(canvas)
                     val filename = "ViN_Screenshot_${System.currentTimeMillis()}.png"
-                    val file = java.io.File(
-                        android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_PICTURES),
-                        filename
-                    )
-                    file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-                    android.media.MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), null, null)
-                    Toast.makeText(context, "Screenshot saved to Pictures", Toast.LENGTH_SHORT).show()
+
+                    // Scoped-storage-safe capture. The old code wrote straight into
+                    // Environment.getExternalStoragePublicDirectory(), which fails on
+                    // API 29+ (no legacy flag) and on API 26-28 (runtime permission
+                    // never requested) -- screenshots were silently broken everywhere.
+                    var mediaUri: android.net.Uri? = null
+                    var localFile: java.io.File? = null
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        val values = android.content.ContentValues().apply {
+                            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, filename)
+                            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                            put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH,
+                                android.os.Environment.DIRECTORY_PICTURES + "/ViN Browser")
+                            put(android.provider.MediaStore.MediaColumns.IS_PENDING, 1)
+                        }
+                        mediaUri = context.contentResolver.insert(
+                            android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values
+                        )
+                        mediaUri?.let { uri ->
+                            context.contentResolver.openOutputStream(uri)?.use { out ->
+                                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                            }
+                            val done = android.content.ContentValues().apply {
+                                put(android.provider.MediaStore.MediaColumns.IS_PENDING, 0)
+                            }
+                            context.contentResolver.update(uri, done, null, null)
+                        }
+                    }
+                    if (mediaUri == null) {
+                        // API 26-28: app-specific Pictures dir (no permission needed);
+                        // the share sheet below makes the file reachable anywhere.
+                        val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES)
+                            ?: context.filesDir
+                        val file = java.io.File(dir, filename)
+                        file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
+                        localFile = file
+                    }
+
+                    // Share sheet with the captured image
+                    val shareUri: android.net.Uri = mediaUri
+                        ?: androidx.core.content.FileProvider.getUriForFile(
+                            context,
+                            "${context.packageName}.fileprovider",
+                            localFile!!
+                        )
+                    val send = Intent(Intent.ACTION_SEND).apply {
+                        type = "image/png"
+                        putExtra(Intent.EXTRA_STREAM, shareUri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(send, "Share screenshot"))
                 } catch (_: Exception) {
                     Toast.makeText(context, "Failed to capture screenshot", Toast.LENGTH_SHORT).show()
                 }
@@ -897,6 +995,8 @@ fun VinBrowserRoot(
     // 10. Translate Page Language Dialog
     if (showTranslateDialog) {
         val scheme = MaterialTheme.colorScheme
+        // Last-used target language (persisted) is highlighted
+        val savedTranslateLang = remember { StorageService(context).getTranslateTargetLang() }
         AlertDialog(
             onDismissRequest = { showTranslateDialog = false },
             confirmButton = {},
@@ -905,14 +1005,15 @@ fun VinBrowserRoot(
             text = {
                 Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                     languages.forEach { (code, label) ->
+                        val isSaved = code == savedTranslateLang
                         Text(
-                            label,
+                            if (isSaved) "$label  - last used" else label,
                             Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(Radius.sm))
                                 .clickable { translateTo(code) }
                                 .padding(vertical = Space.md, horizontal = Space.sm),
-                            color = scheme.onSurface,
+                            color = if (isSaved) scheme.primary else scheme.onSurface,
                             style = MaterialTheme.typography.bodyLarge
                         )
                     }

@@ -39,19 +39,18 @@ object YouTubeFocus {
 
     private fun buildScript(s: YouTubeFocusSettings): String {
         val css = buildString {
-            // --- Video geometry fix -------------------------------------------------
-            // Some Chromium/WebView builds render the YouTube player element with the
-            // raw video dimensions instead of the player container's aspect ratio,
-            // which makes faces/objects look horizontally stretched (wide/fat video).
-            // object-fit: contain restores correct letterboxing inside the player box.
-            // Player containers are capped at 100% (NOT 100vw -- 100vw includes the
-            // scrollbar width and causes horizontal overflow on mobile pages).
-            append("video { object-fit: contain !important; }")
-            append("ytm-player, ytm-player-item, .html5-video-player, ytd-player, #player-container, ytm-quick-access-player-renderer { max-width: 100% !important; }")
-
-            // --- Ad hiding ----------------------------------------------------------
-            // Video and banner ads + Open App promo banner removal
-            append(".ad-showing, .ad-interrupting, .video-ads, .ytp-ad-overlay-container, .ytp-ad-message-container, ytm-promoted-sparkles-web-renderer, ytd-promoted-video-renderer, ytd-banner-promo-renderer-background, ytd-action-companion-ad-renderer, ytd-in-feed-ad-layout-renderer, ytm-promoted-video-renderer, .ytp-ad-overlay-slot, .ytp-ad-player-overlay, ytm-app-banner, .ytm-app-banner { display: none !important; }")
+            // --- Ad hiding (ONLY ad elements are hidden) ----------------------------
+            // NOTE: no player-geometry CSS here on purpose. The polymer mobile player
+            // computes its container size with JS; forcing object-fit/max-width with
+            // !important broke that height calculation (player collapsed to 0 height
+            // or a thin strip). The original stretch came from the LEGACY frontend
+            // served to old UAs -- fixed at the UA level instead (pinned modern UA).
+            // Video and banner ads + Open App promo banner removal.
+            // NOTE: `.ad-showing` / `.ad-interrupting` are set ON the player element
+            // itself while an ad plays -- hiding them hides the whole player, so they
+            // are intentionally NOT in this list. The watchdog below skips ads
+            // functionally (mute -> 16x -> seek -> click skip).
+            append(".video-ads, .ytp-ad-overlay-container, .ytp-ad-message-container, ytm-promoted-sparkles-web-renderer, ytd-promoted-video-renderer, ytd-banner-promo-renderer-background, ytd-action-companion-ad-renderer, ytd-in-feed-ad-layout-renderer, ytm-promoted-video-renderer, .ytp-ad-overlay-slot, .ytp-ad-player-overlay, ytm-app-banner, .ytm-app-banner { display: none !important; }")
 
             if (s.hideShorts) {
                 append(" ytd-rich-shelf-renderer[is-shorts], ytd-reel-shelf-renderer, ytd-mini-guide-entry-renderer[aria-label='Shorts'], ytm-reel-shelf-renderer, ytm-pivot-bar-item-renderer:nth-child(2) { display: none !important; }")

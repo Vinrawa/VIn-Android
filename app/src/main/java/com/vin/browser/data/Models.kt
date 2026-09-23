@@ -37,7 +37,8 @@ data class TabState(
     val favicon: Bitmap? = null,
     val isIncognito: Boolean = false,
     val isHibernated: Boolean = false,
-    val groupId: String? = null
+    val groupId: String? = null,
+    val isPinned: Boolean = false
 )
 
 data class SuggestionItem(
@@ -79,7 +80,8 @@ data class SiteControlSettings(
     val desktopMode: Boolean = false,
     val audioMuted: Boolean = false,
     val openApps: Boolean = false,
-    val backgroundPlay: Boolean = true
+    val backgroundPlay: Boolean = true,
+    val volumeBoost: Boolean = false   // 2x Web-Audio gain for this site (opt-in)
 )
 
 data class ReadingListItem(

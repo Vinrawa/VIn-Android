@@ -2,9 +2,11 @@ package com.vin.browser.ui.components
 
 import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -12,12 +14,15 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -51,6 +56,7 @@ fun TabTraySheet(
     onCloseAllTabs: () -> Unit,
     onNewTab: () -> Unit,
     onNewIncognitoTab: () -> Unit,
+    onTogglePin: (String) -> Unit = {},
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -58,9 +64,18 @@ fun TabTraySheet(
     val brand = VinTheme.colors
     val view = LocalView.current
     var selectedSegment by remember { mutableIntStateOf(0) } // 0 = Standard, 1 = Incognito
+    var searchQuery by remember { mutableStateOf("") }
     val standardTabs = tabs.filter { !it.isIncognito }
     val incognitoTabs = tabs.filter { it.isIncognito }
-    val visibleTabs = if (selectedSegment == 1) incognitoTabs else standardTabs
+    val anyPinned = tabs.any { it.isPinned }
+    val q = searchQuery.trim()
+    val visibleTabs = (if (selectedSegment == 1) incognitoTabs else standardTabs)
+        .filter { tab ->
+            q.isEmpty() || tab.title.contains(q, ignoreCase = true) ||
+                tab.url.contains(q, ignoreCase = true)
+        }
+        // Pinned tabs float to the top; stable sort keeps recency order otherwise
+        .sortedByDescending { it.isPinned }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -100,7 +115,8 @@ fun TabTraySheet(
                                 modifier = Modifier.size(Sizes.iconSm)
                             )
                             Spacer(Modifier.width(Space.xs))
-                            Text("Close All", color = brand.danger)
+                            // Pinned tabs survive this action, so say what it really does
+                            Text(if (anyPinned) "Close Unpinned" else "Close All", color = brand.danger)
                         }
                     }
                     IconButton(onClick = onDismiss) {
@@ -140,11 +156,48 @@ fun TabTraySheet(
             }
             Spacer(Modifier.height(Space.md))
 
+            // Tab search -- filters the CURRENT segment by title/URL
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                singleLine = true,
+                placeholder = { Text("Search tabs", style = MaterialTheme.typography.bodyMedium) },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null, tint = scheme.onSurfaceVariant, modifier = Modifier.size(Sizes.iconSm)) },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(Sizes.iconMd)) {
+                            Icon(Icons.Filled.Close, contentDescription = "Clear search", tint = scheme.onSurfaceVariant, modifier = Modifier.size(Sizes.iconSm))
+                        }
+                    }
+                },
+                keyboardOptions = KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+                shape = Radius.pill,
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedBorderColor = scheme.outlineVariant,
+                    focusedBorderColor = scheme.primary
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Sizes.minTouchTarget)
+            )
+            Spacer(Modifier.height(Space.md))
+
             if (visibleTabs.isEmpty()) {
-                EmptyTabsState(
-                    isIncognito = selectedSegment == 1,
-                    modifier = Modifier.weight(1f)
-                )
+                if (q.isNotEmpty()) {
+                    // Search miss -- distinct from the real empty-states above
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Text(
+                            "No tabs match \"$q\"",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = scheme.onSurfaceVariant
+                        )
+                    }
+                } else {
+                    EmptyTabsState(
+                        isIncognito = selectedSegment == 1,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
             } else {
                 TabGrid(
                     tabs = visibleTabs,
@@ -153,6 +206,10 @@ fun TabTraySheet(
                     onCloseTab = {
                         view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
                         onCloseTab(it)
+                    },
+                    onTogglePin = { id ->
+                        view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                        onTogglePin(id)
                     },
                     modifier = Modifier.weight(1f)
                 )
@@ -188,6 +245,7 @@ private fun TabGrid(
     activeTabId: String,
     onTabClick: (String) -> Unit,
     onCloseTab: (String) -> Unit,
+    onTogglePin: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     LazyVerticalGrid(
@@ -201,7 +259,8 @@ private fun TabGrid(
                 tab = tab,
                 isActive = tab.id == activeTabId,
                 onClick = { onTabClick(tab.id) },
-                onClose = { onCloseTab(tab.id) }
+                onClose = { onCloseTab(tab.id) },
+                onTogglePin = { onTogglePin(tab.id) }
             )
         }
     }
@@ -271,12 +330,14 @@ private fun TabSegmentButton(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TabCardItem(
     tab: TabState,
     isActive: Boolean,
     onClick: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    onTogglePin: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     val thumbnail = remember(tab.id) { TabThumbnailManager.getThumbnail(tab.id) }
@@ -293,23 +354,32 @@ private fun TabCardItem(
         color = cardColor,
         border = BorderStroke(
             if (isActive) 2.dp else 1.dp,
-            if (isActive) scheme.primary else cardBorder
+            if (isActive) scheme.primary
+            else if (tab.isPinned) scheme.primary.copy(alpha = 0.45f)
+            else cardBorder
         ),
         shadowElevation = if (isActive) 6.dp else 2.dp,
         modifier = Modifier
             .fillMaxWidth()
             .offset(x = dragOffsetX.dp)
-            .pointerInput(tab.id) {
-                detectHorizontalDragGestures(
-                    onDragEnd = {
-                        if (dragOffsetX > 80f || dragOffsetX < -80f) onClose()
-                        else dragOffsetX = 0f
-                    },
-                    onHorizontalDrag = { _, dragAmount -> dragOffsetX += dragAmount * 0.5f }
-                )
+            .pointerInput(tab.id, tab.isPinned) {
+                // Pinned tabs resist the swipe-to-close gesture by contract
+                if (!tab.isPinned) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            if (dragOffsetX > 80f || dragOffsetX < -80f) onClose()
+                            else dragOffsetX = 0f
+                        },
+                        onHorizontalDrag = { _, dragAmount -> dragOffsetX += dragAmount * 0.5f }
+                    )
+                }
             }
             .clip(RoundedCornerShape(Radius.md))
-            .clickable { onClick() }
+            // Long-press toggles the pin; tap opens the tab
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onTogglePin
+            )
     ) {
         // Hibernated tabs read dimmed -- their favicon/preview bitmaps were released
         Column(
@@ -352,23 +422,44 @@ private fun TabCardItem(
                             .size(Sizes.iconXs)
                     )
                 }
-                // Close -- 32dp target, ripple clipped to its circle
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(Space.xs)
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(Color.Black.copy(alpha = 0.6f))
-                        .clickable { onClose() },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Filled.Close,
-                        contentDescription = "Close Tab",
-                        tint = Color.White,
-                        modifier = Modifier.size(Sizes.iconSm)
-                    )
+                // Pinned badge replaces close -- pinned tabs cannot be closed by
+                // accident (unpin via long-press, then close normally)
+                if (tab.isPinned) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(Space.xs)
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.6f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.PushPin,
+                            contentDescription = "Pinned tab (long-press to unpin)",
+                            tint = Color(0xFF34D399),
+                            modifier = Modifier.size(Sizes.iconSm)
+                        )
+                    }
+                } else {
+                    // Close -- 32dp target, ripple clipped to its circle
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(Space.xs)
+                            .size(32.dp)
+                            .clip(CircleShape)
+                            .background(Color.Black.copy(alpha = 0.6f))
+                            .clickable { onClose() },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = "Close Tab",
+                            tint = Color.White,
+                            modifier = Modifier.size(Sizes.iconSm)
+                        )
+                    }
                 }
             }
             // Info row: favicon + title + hibernation state

@@ -144,7 +144,8 @@ class StorageService(context: Context) {
                 desktopMode = obj.optBoolean("desktopMode", false),
                 audioMuted = obj.optBoolean("audioMuted", false),
                 openApps = obj.optBoolean("openApps", false),
-                backgroundPlay = obj.optBoolean("backgroundPlay", true)
+                backgroundPlay = obj.optBoolean("backgroundPlay", true),
+                volumeBoost = obj.optBoolean("volumeBoost", false)
             )
         } catch (_: Exception) { SiteControlSettings() }
     }
@@ -163,6 +164,7 @@ class StorageService(context: Context) {
             put("audioMuted", settings.audioMuted)
             put("openApps", settings.openApps)
             put("backgroundPlay", settings.backgroundPlay)
+            put("volumeBoost", settings.volumeBoost)
         }
         prefs.edit().putString("site_settings_$clean", obj.toString()).apply()
     }

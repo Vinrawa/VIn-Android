@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider paths for the share sheet:
+     - screenshots saved to the app-specific Pictures dir (API 26-28)
+     - exported PDFs in the app-specific Documents dir (API 26-28)
+     - reading-list offline archives (files dir), shared as files -->
+<paths>
+    <external-files-path
+        name="vin_pictures"
+        path="Pictures/" />
+    <external-files-path
+        name="vin_documents"
+        path="Documents/" />
+    <files-path
+        name="vin_internal"
+        path="." />
+</paths>

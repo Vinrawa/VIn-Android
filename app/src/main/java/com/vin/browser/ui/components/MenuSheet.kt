@@ -49,6 +49,9 @@ fun MenuSheet(
     onDoctorClick: () -> Unit = {},
     onReaderViewClick: () -> Unit,
     onTranslateClick: () -> Unit,
+    onSavePdf: () -> Unit = {},
+    isVolumeBoost: Boolean = false,
+    onVolumeBoostToggle: () -> Unit = {},
     onSettingsClick: () -> Unit,
     onReadingListClick: () -> Unit = {},
     onCopyLink: () -> Unit = {},
@@ -117,7 +120,14 @@ fun MenuSheet(
 
             MenuSectionHeader("PAGE")
             MenuRow(Icons.AutoMirrored.Filled.MenuBook, "Reader View", onReaderViewClick)
-            MenuRow(Icons.Filled.Translate, "Translate Page?", onTranslateClick)
+            MenuRow(Icons.Filled.Translate, "Translate Page", onTranslateClick)
+            MenuRow(Icons.Filled.PictureAsPdf, "Save as PDF", onSavePdf)
+            MenuToggleRow(
+                icon = if (isVolumeBoost) Icons.Filled.VolumeUp else Icons.Filled.VolumeOff,
+                label = "Volume Boost (this site)",
+                checked = isVolumeBoost,
+                onToggle = onVolumeBoostToggle
+            )
 
             MenuSectionHeader("TOOLS")
             MenuRow(Icons.Filled.ContentCopy, "Copy Link", onCopyLink)

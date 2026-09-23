@@ -172,3 +172,91 @@ User report: mobile mode still stretched, YT 3-dot menus dead, comments not load
   the scrollbar width and can push pages into horizontal overflow).
 
 Verification artifacts: `scripts/yt_block_sim.py`, `scripts/verify_fingerprint_index.py`.
+
+### R2.5 HOTFIX — player collapsed / thin strip (user field-test round 2)
+User report (with screenshots): player container height collapsed to 0 (MIDDLE CHILD)
+or a thin letterbox strip (Earrings) on the new polymer mobile UI.
+User-side diagnosis confirmed correct: the injected player-geometry CSS fought the
+polymer player's JS height calculation.
+
+- `adblock/YouTubeFocus.kt`: REMOVED the geometry block entirely
+  (`video { object-fit: contain !important }` and the `max-width` cap on
+  ytm-player/ytm-player-item/... containers). The stretch it tried to fix came from
+  the legacy frontend; the polymer player sizes itself correctly without help.
+- `adblock/YouTubeFocus.kt`: removed `.ad-showing` / `.ad-interrupting` from the
+  display:none list -- these classes are set ON the player element while an ad plays,
+  so hiding them hid the entire player. Ad skipping stays with the watchdog JS
+  (mute -> 16x -> seek-to-end -> click skip), which never touches layout.
+- `ui/screens/WebViewScreen.kt`: pinned UA version 140 -> 128 for BOTH modes. 128 is
+  the empirically proven version (desktop mode shipped it and worked on the device);
+  over-claiming far ahead of the real engine risks YouTube serving bundles using
+  APIs the WebView lacks.
+- `loadWithOverviewMode = true` is KEPT: pages with a proper viewport meta
+  (m.youtube.com included) render at scale 1 -- overview mode is a no-op for them;
+  it only fits viewport-less desktop pages to screen width, which desktop mode needs.
+
+---
+
+## Round 4 — Feature pack (user request: "is baar kuch naya feature add karein")
+
+New features: Save as PDF, Tab Pin + Tab Search, Volume Boost.
+Fixes: broken screenshot (scoped storage), translate.goog host escaping.
+Already present (verified, untouched): pull-to-refresh (top-strip drag, gates on
+`VinWebView.isAtTop()`), edge-swipe back/forward gestures, page translate (19 languages),
+screenshot menu entry, speed dial.
+
+### R4.1 Save as PDF — `engine/PdfExporter.kt` (new), `ui/components/MenuSheet.kt`, `MainActivity.kt`
+- Silent export: drives `webView.createPrintDocumentAdapter()` directly
+  (onLayout -> onWrite) on a HandlerThread, so the paginated page lands in
+  `Downloads/ViN Browser/` without opening the system print dialog.
+  - API 29+: MediaStore Downloads (IS_PENDING flow, no permissions needed).
+  - API 26-28: app-specific Documents dir (no permission; reachable via
+    file managers / the new FileProvider).
+- Any failure falls back to `PrintManager.print()` -- the system dialog with the
+  built-in "Save as PDF" destination. Half-written destinations are deleted
+  (no 0-byte ghost files).
+- Menu: PAGE -> "Save as PDF".
+
+### R4.2 Tab Pin + Tab Search — `data/Models.kt`, `BrowserViewModel.kt`, `ui/components/TabTraySheet.kt`
+- `TabState.isPinned`. Long-press a tab card to pin/unpin.
+- Pinned tabs: float to the top of the tray, tinted border + pin badge, swipe-to-close
+  disabled, close button replaced by the badge, never hibernated
+  (`hibernateExcessTabs` keep-set exemption), and survive "Close All"
+  (button relabels to "Close Unpinned" when pins exist; UNDO still restores everything;
+  incognito traces wiped only when no incognito tab remains).
+- Tab search: pill search field filters the CURRENT segment (Standard/Incognito)
+  by title/URL, with a distinct "No tabs match" state.
+- Note: pins are per-session like the tabs themselves (tabs are not persisted to disk).
+
+### R4.3 Volume Boost (2x) — `engine/VolumeBoost.kt` (new), `data/Models.kt`, `data/StorageService.kt`, `ui/screens/WebViewScreen.kt`, `MenuSheet.kt`, `MainActivity.kt`
+- Web Audio gain node: `createMediaElementSource(video) -> GainNode(2.0) -> destination`.
+  System volume caps at 100%; this raises pre-DSP gain for genuinely quiet videos.
+  Works on YouTube because MSE blob: sources never taint the audio graph.
+- Opt-in PER SITE (`SiteControlSettings.volumeBoost`, persisted per domain) -- never
+  global, so a CORS-tainted `<audio>` elsewhere can't be silently muted by accident.
+- Gesture gating: the graph is only created after the first in-page user gesture;
+  an AudioContext created pre-gesture stays `suspended` and would route a playing
+  element into silence. Re-injected on every page finish (SPA navigation safe);
+  toggling off writes gain 1.0 (bit-transparent passthrough, no teardown needed).
+- Menu: PAGE -> "Volume Boost (this site)" toggle.
+
+### R4.4 Screenshot: scoped-storage fix + share sheet — `MainActivity.kt`, `AndroidManifest.xml`, `res/xml/file_paths.xml` (new)
+- The old code wrote directly to `Environment.getExternalStoragePublicDirectory()`:
+  EACCES on API 29+ (no legacy-storage flag) and on API 26-28 (runtime permission
+  never requested) -- screenshots failed silently on effectively every device.
+- Now: API 29+ MediaStore Images with `Pictures/ViN Browser` (IS_PENDING flow,
+  no permission); API 26-28 app-specific Pictures + FileProvider share.
+- After capture the Android share sheet opens with the PNG (FileProvider authority
+  `${applicationId}.fileprovider`, exported=false, grantUriPermissions).
+
+### R4.5 Page Translate fixes — `MainActivity.kt`
+- Host escaping: existing hyphens are now DOUBLED before dots become hyphens
+  (`my-site.com` -> `my--site-com.translate.goog`). Without this, hyphenated
+  hosts decoded to the wrong origin.
+- Added `_x_tr_pto=wapp`; guard against re-translating an already-translated
+  (`*.translate.goog`) page; last-used target language is highlighted in the picker
+  (persisted via the existing `translate_target_lang` setting).
+
+### R4.6 Pull-to-refresh — already implemented (verified, no change)
+Top-strip drag triggers reload gated on `VinWebView.isAtTop()`; edge strips handle
+back/forward with on-screen affordances. Listed here so nobody "re-adds" it later.

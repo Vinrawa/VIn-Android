@@ -514,12 +514,26 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun closeAllTabs(): List<TabState> {
         val backup = _tabs.value
         tabsBackup = backup
-        val hadIncognito = backup.any { it.isIncognito }
-        val newTab = TabState(id = UUID.randomUUID().toString())
-        _tabs.value = listOf(newTab)
-        _activeTabId.value = newTab.id
-        goHome()
-        if (hadIncognito) wipeIncognitoData()
+        // Pinned tabs survive "Close All" -- that is their contract. The UNDO
+        // snackbar still restores the full previous set.
+        val pinned = backup.filter { it.isPinned }
+        if (pinned.isEmpty()) {
+            val hadIncognito = backup.any { it.isIncognito }
+            val newTab = TabState(id = UUID.randomUUID().toString())
+            _tabs.value = listOf(newTab)
+            _activeTabId.value = newTab.id
+            goHome()
+            if (hadIncognito) wipeIncognitoData()
+        } else {
+            _tabs.value = pinned
+            if (_tabs.value.none { it.id == _activeTabId.value }) {
+                switchTab(pinned.first().id)
+            }
+            // Incognito traces wiped only when no incognito tab (pinned included) remains
+            if (backup.any { it.isIncognito } && pinned.none { it.isIncognito }) {
+                wipeIncognitoData()
+            }
+        }
         return backup
     }
 
@@ -625,12 +639,18 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             tabs.takeLast(7).forEach { add(it.id) }
         }
         _tabs.value = tabs.map { tab ->
-            if (tab.id in keepSet || tab.isHibernated) tab
+            if (tab.id in keepSet || tab.isHibernated || tab.isPinned) tab
             else {
                 TabThumbnailManager.removeThumbnail(tab.id)
                 tab.copy(isHibernated = true, favicon = null)
             }
         }
+    }
+
+    /** Pin/unpin a tab. Pinned tabs: sort first in the tray, resist swipe-close,
+     *  survive "Close All", and never get hibernated. */
+    fun toggleTabPin(id: String) {
+        _tabs.value = _tabs.value.map { if (it.id == id) it.copy(isPinned = !it.isPinned) else it }
     }
 
     fun closeTab(id: String) {
