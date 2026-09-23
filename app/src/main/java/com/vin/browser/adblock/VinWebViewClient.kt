@@ -125,6 +125,14 @@ class VinWebViewClient(
             return super.shouldInterceptRequest(view, request)
         }
 
+        // YouTube core data API hard-guard: /youtubei/ serves comments, watch-next,
+        // the player payload and the navigation guide. Blocking any of these silently
+        // breaks core site functionality (dead menus, missing comments), so they are
+        // never filtered regardless of what a future filter-list update contains.
+        if (reqHost == "www.youtube.com" && uri.path?.startsWith("/youtubei/") == true) {
+            return super.shouldInterceptRequest(view, request)
+        }
+
         val result = engine.shouldBlock(reqUrl, reqHost, currentPageHost)
         currentStats.record(result)
         onStatsUpdated(currentStats)

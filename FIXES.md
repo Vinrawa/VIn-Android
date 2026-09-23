@@ -135,3 +135,40 @@ site label removed.
    its bundled-list assertion doubles as a regression test for the rule pipeline fixes.
 4. All PDF-export token artifacts repaired (8 fixes across MainActivity.kt /
    UserScriptSheet.kt; the rest were cleaned during file rewrites).
+
+---
+
+## Round 2 — YouTube deep-fix (user field-test feedback, 2026-09-23)
+
+User report: mobile mode still stretched, YT 3-dot menus dead, comments not loading,
+"old Google" look; video slow to load in BOTH modes; desktop mode fine.
+
+### R2.1 Slow video/page load (both modes) — `adblock/AdBlockEngine.kt`
+- Measured root cause: 11,399 URL-pattern rules were linearly scanned against EVERY
+  subresource request (`RuleIndex.candidates` yielded the whole pattern list).
+  A YouTube page fires 300+ subresources -> ~3.4M string scans + regexes per page load,
+  serializing the resource pipeline (multi-second stalls on mid-range phones).
+- Fix: uBlock-style literal fingerprint index. Rules bucket by the first 7 chars of
+  their longest literal segment; per request, the engine walks the lowercased URL's
+  7-char windows (O(URL length) hash probes) and full-matches only bucket candidates.
+  240-URL differential test vs the old linear scan: 0 block/allow outcome mismatches.
+  Longest candidate bucket = 104 rules; ~50-100x fewer regex evaluations per request.
+
+### R2.2 Legacy YouTube mobile UI (stretch, dead 3-dot, dead comments) — `ui/screens/WebViewScreen.kt`
+- Root cause: mobile mode used `WebSettings.getDefaultUserAgent()`. On devices with an
+  old/vendor WebView this reports an outdated Chrome UA and YouTube serves its LEGACY
+  mobile frontend: stretched player, broken 3-dot menus, broken comments ("purana google").
+  Desktop mode always used a pinned modern UA and worked — which pinpointed the UA.
+- Fix: pinned modern UAs for both modes (Chrome/140), no device dependence:
+  mobile `Android 14; K ... Chrome/140 Mobile Safari`, desktop `Windows NT 10.0 ... Chrome/140`.
+
+### R2.3 YouTube core-API hard guard — `adblock/VinWebViewClient.kt`
+- `www.youtube.com/youtubei/*` (comments, watch-next, player, guide) is now exempt from
+  filtering. A differential simulation over EasyList+EasyPrivacy showed no current rule
+  hits it; the guard future-proofs against filter-list updates.
+
+### R2.4 Geometry CSS overflow — `adblock/YouTubeFocus.kt`
+- Player-container cap changed `max-width: 100vw` -> `max-width: 100%` (100vw includes
+  the scrollbar width and can push pages into horizontal overflow).
+
+Verification artifacts: `scripts/yt_block_sim.py`, `scripts/verify_fingerprint_index.py`.

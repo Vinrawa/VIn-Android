@@ -74,12 +74,40 @@ class AdBlockEngine {
         val cosmeticExceptions: Map<String, List<String>>
     )
 
-    /** Domain rules stay O(host labels); only URL patterns need a literal scan. */
+    /**
+     * Domain rules stay O(host labels). URL patterns use a uBlock-style literal
+     * fingerprint index: a rule can only match when its longest literal segment
+     * occurs in the request URL, so the index buckets rules by the first 7 chars
+     * of that segment and per-request lookup walks the URL's 7-char windows --
+     * O(URL length) hash probes instead of scanning all ~11k patterns per request.
+     *
+     * Correctness: if the literal occurs at URL position p, then the URL window at
+     * p equals the literal's first 7 chars, so the bucket is always probed. The
+     * full NetworkPattern regex still runs on every candidate, so matching
+     * semantics are identical to a linear scan.
+     */
     private class RuleIndex(rules: List<BlockRule>) {
         private val domains = rules.filter { it.isDomainRule }.groupBy { it.pattern }
-        private val patterns = rules.filterNot { it.isDomainRule }.distinct()
+        private val patterns = rules.filterNot { it.isDomainRule }
 
-        fun candidates(host: String): Sequence<BlockRule> = sequence {
+        private val FINGERPRINT_LEN = 7
+        private val fingerprint = HashMap<String, MutableList<BlockRule>>()
+        private val shortLiteral = mutableListOf<Pair<String, BlockRule>>() // literals < 7 chars
+        private val wildcard = mutableListOf<BlockRule>()                    // no literal at all
+
+        init {
+            patterns.forEach { rule ->
+                val literal = rule.pattern.split('*', '^', '|').maxByOrNull { it.length }.orEmpty()
+                when {
+                    literal.length >= FINGERPRINT_LEN ->
+                        fingerprint.getOrPut(literal.substring(0, FINGERPRINT_LEN)) { mutableListOf() }.add(rule)
+                    literal.isNotEmpty() -> shortLiteral.add(literal to rule)
+                    else -> wildcard.add(rule)
+                }
+            }
+        }
+
+        fun candidates(host: String, urlLower: String): Sequence<BlockRule> = sequence {
             var probe = host
             while (probe.isNotEmpty()) {
                 domains[probe]?.let { yieldAll(it) }
@@ -87,7 +115,21 @@ class AdBlockEngine {
                 if (dot < 0) break
                 probe = probe.substring(dot + 1)
             }
-            yieldAll(patterns)
+            if (fingerprint.isNotEmpty() || shortLiteral.isNotEmpty()) {
+                val seen = HashSet<BlockRule>()
+                var i = 0
+                val last = urlLower.length - FINGERPRINT_LEN
+                while (i <= last) {
+                    fingerprint[urlLower.substring(i, i + FINGERPRINT_LEN)]?.let { bucket ->
+                        for (rule in bucket) if (seen.add(rule)) yield(rule)
+                    }
+                    i++
+                }
+                for ((literal, rule) in shortLiteral) {
+                    if (urlLower.contains(literal)) yield(rule)
+                }
+            }
+            yieldAll(wildcard)
         }
     }
 
@@ -207,9 +249,10 @@ class AdBlockEngine {
         if (siteExceptions[page]?.contains(requestUrl) == true) return null
         val snapshot = ruleSet
         val host = requestHost.lowercase()
+        val urlLower = requestUrl.lowercase()
         val thirdParty = page.isNotBlank() && baseDomain(host) != baseDomain(page)
-        if (snapshot.exceptions.candidates(host).any { it.matches(requestUrl, host, page, thirdParty) }) return null
-        for (rule in snapshot.network.candidates(host)) {
+        if (snapshot.exceptions.candidates(host, urlLower).any { it.matches(requestUrl, host, page, thirdParty) }) return null
+        for (rule in snapshot.network.candidates(host, urlLower)) {
             if (rule.category == BlockCategory.TRACKER && !isTrackerBlockEnabled) continue
             if (rule.matches(requestUrl, host, page, thirdParty)) {
                 recordGlobalBlock(rule.category, page)
@@ -227,8 +270,9 @@ class AdBlockEngine {
         val thirdParty = page.isNotBlank() && baseDomain(host) != baseDomain(page)
         if (page.isNotBlank() && !thirdParty) return false
         val snapshot = ruleSet
-        if (snapshot.popupExceptions.candidates(host).any { it.matches(requestUrl, host, page, thirdParty) }) return false
-        if (snapshot.popup.candidates(host).any { it.matches(requestUrl, host, page, thirdParty) }) {
+        val urlLower = requestUrl.lowercase()
+        if (snapshot.popupExceptions.candidates(host, urlLower).any { it.matches(requestUrl, host, page, thirdParty) }) return false
+        if (snapshot.popup.candidates(host, urlLower).any { it.matches(requestUrl, host, page, thirdParty) }) {
             recordGlobalBlock(BlockCategory.AD, page)
             return true
         }

@@ -55,8 +55,21 @@ import com.vin.browser.ui.theme.Sizes
 import com.vin.browser.ui.theme.Space
 import kotlin.math.abs
 
-private fun mobileUserAgent(context: Context): String =
-    WebSettings.getDefaultUserAgent(context).replace("; wv", "")
+/**
+ * Hard-coded modern UAs (same Chrome version for both modes).
+ *
+ * Why not WebSettings.getDefaultUserAgent() for mobile? The device's WebView
+ * version varies wildly (budget/OEM devices ship Chrome 7x-9x or vendor UAs);
+ * YouTube serves its LEGACY mobile frontend to those UAs, which renders with a
+ * stretched player, dead 3-dot menus and a broken comment section ("old Google"
+ * look). A pinned current Chrome UA makes YouTube serve the current polymer
+ * mobile UI in every WebView. Desktop mode already used a pinned UA and worked.
+ */
+private const val MOBILE_USER_AGENT =
+    "Mozilla/5.0 (Linux; Android 14; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36"
+
+private const val DESKTOP_USER_AGENT =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
 
 /**
  * Forced AMOLED Dark Mode for webpages.
@@ -187,8 +200,6 @@ fun WebViewScreen(
     val ptrRefreshingRef by rememberUpdatedState(ptrRefreshing)
     val webViewRef by rememberUpdatedState(currentWebView)
 
-    val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-
     /** Dispatches non-web schemes to external apps, honoring the per-site setting. */
     fun dispatchExternalUri(target: Uri) {
         try {
@@ -286,7 +297,7 @@ fun WebViewScreen(
                             loadsImagesAutomatically = currentSettings.imagesEnabled && !isLiteMode
                             blockNetworkImage = !currentSettings.imagesEnabled || isLiteMode
 
-                            userAgentString = if (currentSettings.desktopMode) desktopUserAgent else mobileUserAgent(ctx)
+                            userAgentString = if (currentSettings.desktopMode) DESKTOP_USER_AGENT else MOBILE_USER_AGENT
                         }
 
                         if (isIncognito) {
@@ -486,7 +497,7 @@ fun WebViewScreen(
                         webView.settings.cacheMode = targetCache
                     }
 
-                    val targetUa = if (currentSettings.desktopMode) desktopUserAgent else mobileUserAgent(webView.context)
+                    val targetUa = if (currentSettings.desktopMode) DESKTOP_USER_AGENT else MOBILE_USER_AGENT
                     if (webView.settings.userAgentString != targetUa) {
                         webView.settings.userAgentString = targetUa
                         webView.reload()

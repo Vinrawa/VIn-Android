@@ -44,8 +44,10 @@ object YouTubeFocus {
             // raw video dimensions instead of the player container's aspect ratio,
             // which makes faces/objects look horizontally stretched (wide/fat video).
             // object-fit: contain restores correct letterboxing inside the player box.
+            // Player containers are capped at 100% (NOT 100vw -- 100vw includes the
+            // scrollbar width and causes horizontal overflow on mobile pages).
             append("video { object-fit: contain !important; }")
-            append("ytm-player, ytm-player-item, .html5-video-player, ytd-player, #player-container, ytm-quick-access-player-renderer { max-width: 100vw !important; }")
+            append("ytm-player, ytm-player-item, .html5-video-player, ytd-player, #player-container, ytm-quick-access-player-renderer { max-width: 100% !important; }")
 
             // --- Ad hiding ----------------------------------------------------------
             // Video and banner ads + Open App promo banner removal
