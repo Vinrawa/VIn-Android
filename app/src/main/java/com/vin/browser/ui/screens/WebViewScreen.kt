@@ -124,7 +124,7 @@ private fun applyUserAgent(webView: WebView, desktop: Boolean): Boolean {
                 .setPlatform(if (desktop) "Windows" else "Android")
                 .setPlatformVersion(if (desktop) "10.0.0" else "14.0.0")
                 .setArchitecture(if (desktop) "x86" else "")
-                .setModel(if (desktop) "" else "K")
+                .setModel("")
                 .setMobile(!desktop)
                 .setBitness(if (desktop) 64 else UserAgentMetadata.BITNESS_DEFAULT)
                 .setWow64(false)
@@ -336,12 +336,10 @@ fun WebViewScreen(
                             // Incognito: no WebView databases (form/history persistence)
                             databaseEnabled = !isIncognito
 
-                            // Chrome-like viewport: wide layout window + overview scaling.
-                            // Pages with a proper <meta viewport> render at device width;
-                            // legacy pages without one fit-to-width instead of being
-                            // horizontally cropped/stretched.
-                            useWideViewPort = true
-                            loadWithOverviewMode = true
+                            // Viewport: in mobile mode, honor native device width (no 980px desktop stretch).
+                            // Wide viewport & overview scaling only activate when Desktop Mode is enabled.
+                            useWideViewPort = currentSettings.desktopMode
+                            loadWithOverviewMode = currentSettings.desktopMode
                             textZoom = 100
                             setSupportZoom(true)
                             builtInZoomControls = true
@@ -580,6 +578,13 @@ fun WebViewScreen(
                     }
                     if (webView.settings.cacheMode != targetCache) {
                         webView.settings.cacheMode = targetCache
+                    }
+
+                    val targetOverview = currentSettings.desktopMode
+                    if (webView.settings.loadWithOverviewMode != targetOverview || webView.settings.useWideViewPort != targetOverview) {
+                        webView.settings.loadWithOverviewMode = targetOverview
+                        webView.settings.useWideViewPort = targetOverview
+                        webView.reload()
                     }
 
                     // Desktop/mobile toggle: UA string + Client Hints, reload only on change

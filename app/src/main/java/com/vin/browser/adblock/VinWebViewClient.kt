@@ -152,16 +152,16 @@ class VinWebViewClient(
     private fun isEssentialResource(host: String, path: String): Boolean {
         if (host.endsWith(".googlevideo.com")) return true
         if (host == "youtube.com" || host.endsWith(".youtube.com")) {
-            if (path.startsWith("/youtubei/") ||
-                path.startsWith("/s/player/") ||
-                path.startsWith("/s/desktop/") ||
-                path.startsWith("/s/_/") ||
-                path.startsWith("/yts/")
-            ) return true
+            // First-party YouTube APIs (comments, player, next, guide, search, channel)
+            // must NEVER be blocked by adblock rules. Only block explicit ad paths.
+            if (path.contains("/pagead/") || path.contains("/get_midroll_")) {
+                return false
+            }
+            return true
         }
-        if (host.endsWith(".ytimg.com") && (path.startsWith("/yts/") || path.startsWith("/s/"))) return true
+        if (host.endsWith(".ytimg.com") || host.endsWith(".ggpht.com")) return true
         if ((host == "google.com" || host.endsWith(".google.com")) &&
-            (path.startsWith("/xjs/") || path.startsWith("/js/"))
+            (path.startsWith("/xjs/") || path.startsWith("/js/") || path.startsWith("/complete/"))
         ) return true
         if (host == "gstatic.com" || host.endsWith(".gstatic.com")) return true
         return false
