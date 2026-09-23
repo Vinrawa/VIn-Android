@@ -1,6 +1,7 @@
 package com.vin.browser.ui.screens
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.net.Uri
 import android.widget.Toast
@@ -171,6 +172,7 @@ fun QrScannerScreen(
 }
 
 @Composable
+@SuppressLint("UnsafeOptInUsageError")
 private fun CameraPreview(
     onBarcodeDetected: (String?) -> Unit,
     modifier: Modifier = Modifier
