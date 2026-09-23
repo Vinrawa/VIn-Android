@@ -329,7 +329,6 @@ fun WebViewScreen(
                         currentWebView = this
                         isBackgroundPlayActive = (isBackgroundPlay && currentSettings.backgroundPlay)
                         onWebViewCreated(this)
-                        setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null)
 
                         settings.apply {
                             javaScriptEnabled = true
@@ -364,6 +363,17 @@ fun WebViewScreen(
 
                         // UA string + matching Client Hints (mobile/desktop mode)
                         applyUserAgent(this, currentSettings.desktopMode)
+
+                        // WebView appends "X-Requested-With: <package>" to every request.
+                        // Google / YouTube use it to detect in-app WebViews and serve
+                        // legacy frontends (old Google look, stretched player, dead
+                        // menus, missing comments) regardless of the UA. Real browsers
+                        // never send it, so drop it for every origin.
+                        if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+                            try {
+                                WebSettingsCompat.setRequestedWithHeaderOriginAllowList(settings, emptySet())
+                            } catch (_: Exception) { }
+                        }
 
                         if (isIncognito) {
                             // Deprecated no-op in modern WebView but harmless; form data must not persist in private mode
@@ -438,9 +448,11 @@ fun WebViewScreen(
                             isBackgroundPlayEnabled = { isBackgroundPlay && currentSettings.backgroundPlay },
                             isHttpsUpgradeEnabled = { httpsState },
                             userScriptsProvider = { userScriptsState() },
-                            onStatsUpdated = {
-                                onTrackerBlocked()
-                            },
+                            // Per-request stats fire for EVERY network request (allowed or
+                            // not) from WebView IO threads; driving UI state from there
+                            // cost real time on media-heavy pages and double-counted
+                            // blocks. onResourceBlocked below is the single UI trigger.
+                            onStatsUpdated = { },
                             onResourceBlocked = { _, _ ->
                                 onTrackerBlocked()
                             },

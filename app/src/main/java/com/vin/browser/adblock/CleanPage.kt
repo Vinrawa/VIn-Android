@@ -4,65 +4,43 @@ import android.webkit.WebView
 
 object CleanPage {
 
-    // Curated selectors for common cookie/consent/newsletter patterns -- extend
-    // this from a maintained cosmetic filter list over time, it's a starting set
+    /**
+     * Curated selectors for well-known ad / consent / popup containers.
+     *
+     * Only unambiguous tokens are allowed here. Substring selectors such as
+     * `[class*='ad-container']` looked harmless but also matched
+     * lo(ad-container), he(ad-banner), uplo(ad-modal), thre(ad-wrapper) and
+     * removed legitimate UI on many sites (chess boards, upload dialogs, page
+     * headers). Brave / uBlock never guess like that: they rely on exact
+     * EasyList cosmetic rules, which we already inject via [inject].
+     */
     private val knownSelectors = listOf(
+        // Google / GPT / Taboola / Outbrain ad slots (exact, ad-only tokens)
+        "ins.adsbygoogle",
+        ".adsbygoogle",
+        "[id^='google_ads_']",
+        "[id^='div-gpt-ad']",
+        "div[id^='taboola-']",
+        ".taboola-container",
+        ".outbrain-container",
+        ".OUTBRAIN",
+        // Cookie / consent banners
         "[class*='cookie-banner']",
         "[class*='cookie-consent']",
         "[id*='cookie-consent']",
         "[id*='cookiebanner']",
-        "[class*='gdpr']",
-        "[id*='gdpr']",
+        // Newsletter / push-notification nags
         "[class*='newsletter-popup']",
         "[class*='newsletter-modal']",
         "[class*='onesignal']",
         "[class*='push-notification-prompt']",
-        ".adsbygoogle",
-        ".ad-banner",
-        ".ad-container",
-        ".ad-wrapper",
-        ".taboola-container",
-        ".outbrain-container",
-        "[id^='google_ads_']",
-        "[id^='div-gpt-ad']",
-        // ---- Popup / interstitial ad patterns ("buy this" overlays, popunders) ----
-        "[class*='popup-ad']",
-        "[class*='popup_ad']",
-        "[id*='popup-ad']",
-        "[id*='popupad']",
-        "[class*='ad-popup']",
-        "[class*='ad-popup-']",
-        "[class*='ad_modal']",
-        "[class*='ad-modal']",
-        "[id*='ad-modal']",
-        "[class*='ad-overlay']",
-        "[id*='ad-overlay']",
-        "[class*='ad-interstitial']",
-        "[id*='interstitial-ad']",
-        "[class*='interstitial-ad']",
+        // Popunders and fixed-size banner slots
         "[class*='popunder']",
         "[id*='popunder']",
-        "[class*='ad-popout']",
-        "[class*='ad-sticky']",
-        "[class*='ad-float']",
-        "[class*='floating-ad']",
-        "[id*='floatingad']",
-        "[class*='promo-popup']",
-        "[class*='promo-modal']",
-        "[id*='sponsored-popup']",
-        "[class*='sponsored-popup']",
-        "[class*='site-promo']",
-        "[id*='dp-popup']",
-        "[class*='offer-modal']",
-        "[class*='deal-popup']",
-        "[class*='discount-popup']",
-        "[class*='subscribe-popup']",
-        "[id*='shopOurAds']",
-        "[class*='vi-sticky-ad']",
-        "div[id^='taboola-']",
-        "div[class^='taboola']",
         "[class*='banner300']",
-        "[class*='banner728']"
+        "[class*='banner728']",
+        "[class*='vi-sticky-ad']",
+        "[id*='shopOurAds']"
     )
 
     /**
@@ -93,62 +71,63 @@ object CleanPage {
                 }
               } catch(e) {}
 
+              // Hide, never remove: deleting nodes crashes site scripts that still
+              // hold references to them (broken players, frozen SPAs).
+              function hideNode(el) {
+                try { el.style.setProperty('display', 'none', 'important'); } catch(e) {}
+              }
+
+              var AD_MARKER = /(^|[\s_\-])(ad|ads|advert|advertisement|sponsor|sponsored|promo|popup|popunder|interstitial)([\s_\-]|$)/i;
+
               function killIfOverlay(el) {
                 try {
-                  // Skip YouTube essential elements
-                  if (el.closest && (
-                    el.closest('ytm-bottom-sheet-renderer') ||
-                    el.closest('.ytp-settings-menu') ||
-                    el.closest('#movie_player') ||
-                    el.closest('.html5-video-player') ||
-                    el.closest('ytd-player') ||
-                    el.closest('video') ||
-                    el.closest('#player') ||
-                    el.closest('.ytp-chrome-bottom') ||
-                    el.closest('.ytp-chrome-top') ||
-                    el.closest('.ytp-gradient-top') ||
-                    el.closest('.ytp-gradient-bottom') ||
-                    el.closest('.ytp-pause-overlay') ||
-                    el.closest('ytd-engagement-panel-section-list-renderer')
-                  )) return;
-                  const cs = getComputedStyle(el);
-                  if (cs.position !== 'fixed' && cs.position !== 'sticky') return;
-                  const r = el.getBoundingClientRect();
-                  const coverage = (r.width * r.height) / (window.innerWidth * window.innerHeight);
-                  const zIndex = parseInt(cs.zIndex) || 0;
-                  // Only hide overlays that are very likely ads/popups, not legitimate UI
-                  if (coverage > 0.7 && zIndex > 50) {
-                    el.style.setProperty('display', 'none', 'important');
+                  if (el === document.body || el === document.documentElement) return;
+                  // Never touch players, menus, dialogs, navigation or anything that
+                  // carries interactive / rendered content (forms, canvases, iframes,
+                  // games). Those are legitimate full-screen layers, not ads.
+                  if (el.matches && el.matches('dialog, [role="dialog"], [role="menu"], [role="navigation"], nav, header, video, canvas, iframe, ytm-bottom-sheet-renderer, ytd-engagement-panel-section-list-renderer')) return;
+                  if (el.closest && el.closest('#movie_player, .html5-video-player, ytd-player, #player, dialog, [role="dialog"]')) return;
+                  if (el.querySelector && el.querySelector('input, textarea, select, video, canvas, iframe, [contenteditable]')) return;
+                  var cs = getComputedStyle(el);
+                  if (cs.position !== 'fixed') return;
+                  var r = el.getBoundingClientRect();
+                  var coverage = (r.width * r.height) / (window.innerWidth * window.innerHeight);
+                  var zIndex = parseInt(cs.zIndex) || 0;
+                  var cls = (typeof el.className === 'string') ? el.className : '';
+                  var sig = (el.id || '') + ' ' + cls;
+                  // Near-full-screen, very high z-index AND named like an ad/promo.
+                  if (coverage > 0.9 && zIndex >= 999 && AD_MARKER.test(sig)) {
+                    hideNode(el);
                   }
                 } catch(e) {}
               }
 
-              // 2. Remove known popup/consent nodes outright
+              // 2. Hide known ad / consent / popup nodes
               try {
-                document.querySelectorAll("$selectorList").forEach(el => el.remove());
+                document.querySelectorAll("$selectorList").forEach(hideNode);
               } catch(e) {}
 
-              // 3. Full-screen takeover heuristic (fixed overlays covering the viewport)
+              // 3. Full-screen takeover heuristic (conservative, see killIfOverlay)
               try {
-                document.querySelectorAll('body *').forEach(killIfOverlay);
+                document.querySelectorAll('body > *, body > * > *').forEach(killIfOverlay);
               } catch(e) {}
 
               // 4. Watch the DOM for late arrivals (scroll-triggered / delayed popups)
               try {
-                var observer = new MutationObserver(muts => {
-                  muts.forEach(m => {
-                    m.addedNodes.forEach(node => {
+                var observer = new MutationObserver(function(muts) {
+                  muts.forEach(function(m) {
+                    m.addedNodes.forEach(function(node) {
                       if (node.nodeType !== 1) return;
                       try {
-                        if (node.matches && node.matches("$selectorList")) { node.remove(); return; }
+                        if (node.matches && node.matches("$selectorList")) { hideNode(node); return; }
                       } catch(e) {}
                       killIfOverlay(node);
-                      if (node.querySelectorAll) node.querySelectorAll("$selectorList").forEach(el => el.remove());
+                      if (node.querySelectorAll) node.querySelectorAll("$selectorList").forEach(hideNode);
                     });
                   });
                 });
                 observer.observe(document.body, { childList: true, subtree: true });
-                setTimeout(() => observer.disconnect(), 15000);
+                setTimeout(function() { observer.disconnect(); }, 15000);
               } catch(e) {}
             })();
         """.trimIndent()

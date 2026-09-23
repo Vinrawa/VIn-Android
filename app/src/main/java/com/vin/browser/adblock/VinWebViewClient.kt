@@ -116,20 +116,8 @@ class VinWebViewClient(
         val reqHost = uri.host?.lowercase() ?: return super.shouldInterceptRequest(view, request)
         val reqUrl = uri.toString()
 
-        // Instant fast path for video segments only (googlevideo serves both YouTube
-        // content and its CDN traffic; scanning it buys nothing since YouTube ads
-        // cannot be network-distinguished anyway). ytimg/ggpht thumbnails and ad
-        // creatives are cheap to scan thanks to the domain/literal index, so they
-        // are no longer exempted from the engine.
-        if (reqHost.endsWith(".googlevideo.com")) {
-            return super.shouldInterceptRequest(view, request)
-        }
-
-        // YouTube core data API hard-guard: /youtubei/ serves comments, watch-next,
-        // the player payload and the navigation guide. Blocking any of these silently
-        // breaks core site functionality (dead menus, missing comments), so they are
-        // never filtered regardless of what a future filter-list update contains.
-        if (reqHost == "www.youtube.com" && uri.path?.startsWith("/youtubei/") == true) {
+        // Essential first-party infrastructure is never filtered (see below).
+        if (isEssentialResource(reqHost, uri.path ?: "")) {
             return super.shouldInterceptRequest(view, request)
         }
 
@@ -144,6 +132,39 @@ class VinWebViewClient(
         } else {
             super.shouldInterceptRequest(view, request)
         }
+    }
+
+    /**
+     * Resources that must never be filtered, regardless of what a filter list says.
+     *
+     * - googlevideo.com: video segments. Content and ads share the same hosts, so
+     *   scanning them buys nothing and only adds latency to every chunk.
+     * - youtube.com (ALL hosts: www, m, music, tv): /youtubei/ is the data API
+     *   (comments, watch-next, player payload, guide); /s/player, /s/desktop,
+     *   /s/_ and /yts/ are the player and polymer UI bundles. The previous guard
+     *   only covered www.youtube.com, but phones browse m.youtube.com, so
+     *   comments and menus there were exposed to the engine.
+     * - ytimg.com /yts/ and /s/: same bundles served from the static CDN.
+     * - google.com /xjs/ and /js/: Google Search's JS. Blocking any of it makes
+     *   Search fall back to its legacy no-JS layout ("old Google").
+     * - gstatic.com: static assets (fonts, icons, scripts) for all Google sites.
+     */
+    private fun isEssentialResource(host: String, path: String): Boolean {
+        if (host.endsWith(".googlevideo.com")) return true
+        if (host == "youtube.com" || host.endsWith(".youtube.com")) {
+            if (path.startsWith("/youtubei/") ||
+                path.startsWith("/s/player/") ||
+                path.startsWith("/s/desktop/") ||
+                path.startsWith("/s/_/") ||
+                path.startsWith("/yts/")
+            ) return true
+        }
+        if (host.endsWith(".ytimg.com") && (path.startsWith("/yts/") || path.startsWith("/s/"))) return true
+        if ((host == "google.com" || host.endsWith(".google.com")) &&
+            (path.startsWith("/xjs/") || path.startsWith("/js/"))
+        ) return true
+        if (host == "gstatic.com" || host.endsWith(".gstatic.com")) return true
+        return false
     }
 
     override fun onPageFinished(view: WebView?, url: String?) {
