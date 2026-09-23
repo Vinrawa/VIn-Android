@@ -23,7 +23,7 @@ class VinWebView @JvmOverloads constructor(
         isFocusableInTouchMode = true
     }
 
-    /** True when the page is scrolled to (or above) its top edge — gates pull-to-refresh. */
+    /** True when the page is scrolled to (or above) its top edge -- gates pull-to-refresh. */
     fun isAtTop(): Boolean = scrollY <= 0
 
     override fun onCheckIsTextEditor(): Boolean = true

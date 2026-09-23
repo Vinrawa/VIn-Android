@@ -19,9 +19,15 @@
     <!-- QR scanning is optional: do not exclude devices without a camera. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- Cleartext is a functional requirement of a general-purpose web browser
+         (millions of http:// origins must stay reachable). It is mitigated by:
+         HTTPS-upgrade rewriting of typed main-frame navigations, the persistent
+         "Not secure" warning strip, and mixed-content NEVER_ALLOW. -->
     <application
         android:name=".VinBrowserApp"
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/full_backup_content"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"

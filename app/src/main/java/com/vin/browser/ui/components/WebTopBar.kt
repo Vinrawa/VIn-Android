@@ -71,7 +71,7 @@ fun WebTopBar(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Space.sm)
             ) {
-                // Omnibox URL Display (Pill Shape) — full-height chip family
+                // Omnibox URL Display (Pill Shape) -- full-height chip family
                 Surface(
                     shape = RoundedCornerShape(Sizes.topBarChipHeight / 2),
                     color = scheme.surfaceContainerLow,
@@ -126,7 +126,7 @@ fun WebTopBar(
                         ) {
                             if (!isSecure) {
                                 Text(
-                                    text = "Not secure — ",
+                                    text = "Not secure -- ",
                                     color = brand.danger,
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
@@ -145,7 +145,7 @@ fun WebTopBar(
                     }
                 }
 
-                // Incognito indicator chip — same height as the URL pill
+                // Incognito indicator chip -- same height as the URL pill
                 if (isIncognito) {
                     Surface(
                         shape = RoundedCornerShape(Sizes.chipRadius),

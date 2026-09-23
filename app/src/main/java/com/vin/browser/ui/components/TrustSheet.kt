@@ -72,7 +72,7 @@ fun TrustSheet(
                         Spacer(Modifier.height(Space.xxs))
                         Text(
                             text = if (trustInfo.isSecure)
-                                "Verified Safe • ${trustInfo.trackersBlocked} Trackers Blocked"
+                                "HTTPS - ${trustInfo.trackersBlocked} Trackers Blocked"
                             else "Unencrypted Connection",
                             color = if (trustInfo.isSecure) brand.secure else brand.danger,
                             style = MaterialTheme.typography.labelMedium

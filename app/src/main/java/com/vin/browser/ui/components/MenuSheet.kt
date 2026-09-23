@@ -98,7 +98,7 @@ fun MenuSheet(
             }
             Spacer(Modifier.height(Space.md))
 
-            // Action grid — weighted cells (same pattern as the Home speed-dial grid)
+            // Action grid -- weighted cells (same pattern as the Home speed-dial grid)
             Row(modifier = Modifier.fillMaxWidth()) {
                 MenuGridAction(Icons.Filled.Share, "Share", false, onShare, Modifier.weight(1f))
                 MenuGridAction(Icons.Filled.Search, "Find in Page", false, onFindInPage, Modifier.weight(1f))
@@ -117,7 +117,7 @@ fun MenuSheet(
 
             MenuSectionHeader("PAGE")
             MenuRow(Icons.AutoMirrored.Filled.MenuBook, "Reader View", onReaderViewClick)
-            MenuRow(Icons.Filled.Translate, "Translate Page…", onTranslateClick)
+            MenuRow(Icons.Filled.Translate, "Translate Page?", onTranslateClick)
 
             MenuSectionHeader("TOOLS")
             MenuRow(Icons.Filled.ContentCopy, "Copy Link", onCopyLink)
@@ -161,7 +161,7 @@ fun MenuSheet(
     }
 }
 
-/** Navigation row — SheetActionRow with the menu's neutral text color. */
+/** Navigation row -- SheetActionRow with the menu's neutral text color. */
 @Composable
 private fun MenuRow(
     icon: ImageVector,
@@ -179,7 +179,7 @@ private fun MenuRow(
     )
 }
 
-/** Toggle row — thin container around the shared ToggleRowContent anatomy. */
+/** Toggle row -- thin container around the shared ToggleRowContent anatomy. */
 @Composable
 private fun MenuToggleRow(
     icon: ImageVector,

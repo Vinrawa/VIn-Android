@@ -1,7 +1,18 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+}
+
+// Release signing: read keystore config from keystore.properties (repo-ignored) or
+// environment variables. Never sign a release with the debug key again -- an APK
+// signed with the public debug keystore can be overwritten/installed by anyone and
+// cannot be published to Play Store.
+val keystoreProperties = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -16,11 +27,29 @@ android {
         versionName = "1.0.0"
     }
 
+    signingConfigs {
+        if (keystoreProperties["storeFile"] != null) {
+            create("release") {
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("debug")
+            if (keystoreProperties["storeFile"] != null) {
+                signingConfig = signingConfigs.getByName("release")
+            } else {
+                // No signing config provided: leave the release build UNSIGNED rather
+                // than silently producing a debug-signed artifact. Provide a real
+                // keystore via keystore.properties (or CI secrets) to get a signed APK.
+                signingConfig = null
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

@@ -17,7 +17,7 @@ Fix any compilation errors. All imports and signatures were manually verified bu
 
 ---
 
-## TODO — Unwired Features
+## TODO -- Unwired Features
 
 ### 1. QR Scanner Navigation (HIGH)
 - `QrScannerScreen.kt` exists at `ui/screens/QrScannerScreen.kt`
@@ -52,7 +52,7 @@ Fix any compilation errors. All imports and signatures were manually verified bu
 
 ---
 
-## TODO — AndroidManifest.xml
+## TODO -- AndroidManifest.xml
 
 Check and add if missing:
 ```xml
@@ -63,7 +63,7 @@ Check and add if missing:
 
 ---
 
-## TODO — Testing
+## TODO -- Testing
 
 After build succeeds:
 1. Install on device/emulator
@@ -77,11 +77,11 @@ After build succeeds:
 
 ## Key Files to Read First
 
-1. `PROJECT-HANDOFF.md` — Full project state
-2. `MainActivity.kt` — Main entry, all sheet routing
-3. `BrowserViewModel.kt` — All state management
-4. `data/Models.kt` — All data classes
-5. `data/StorageService.kt` — All storage methods
+1. `PROJECT-HANDOFF.md` -- Full project state
+2. `MainActivity.kt` -- Main entry, all sheet routing
+3. `BrowserViewModel.kt` -- All state management
+4. `data/Models.kt` -- All data classes
+5. `data/StorageService.kt` -- All storage methods
 
 ---
 

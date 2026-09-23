@@ -203,11 +203,16 @@ class StorageService(context: Context) {
     fun getLastFilterSync(): Long = prefs.getLong("last_filter_sync", 0L)
     fun setLastFilterSync(ms: Long) = prefs.edit().putLong("last_filter_sync", ms).apply()
 
+    // Remote search suggestions (keystroke privacy). When off, the omnibox only
+    // matches local history/bookmarks and nothing is sent over the network.
+    fun isRemoteSuggestionsEnabled(): Boolean = prefs.getBoolean("remote_suggestions", true)
+    fun setRemoteSuggestionsEnabled(enabled: Boolean) = prefs.edit().putBoolean("remote_suggestions", enabled).apply()
+
     // Webpage translator target language (translate.goog proxy)
     fun getTranslateTargetLang(): String = prefs.getString("translate_target_lang", "hi") ?: "hi"
     fun setTranslateTargetLang(code: String) = prefs.edit().putString("translate_target_lang", code).apply()
 
-    // ── Reading List ──────────────────────────────────────────────
+    // -- Reading List ----------------------------------------------
     fun getReadingList(): List<ReadingListItem> {
         val json = prefs.getString("reading_list", "[]") ?: "[]"
         return try {
@@ -271,7 +276,7 @@ class StorageService(context: Context) {
         prefs.edit().remove("reading_list").apply()
     }
 
-    // ── User Scripts ──────────────────────────────────────────────
+    // -- User Scripts ----------------------------------------------
     fun getUserScripts(): List<UserScript> {
         val json = prefs.getString("user_scripts", "[]") ?: "[]"
         return try {
@@ -333,7 +338,7 @@ class StorageService(context: Context) {
         prefs.edit().putString("user_scripts", result.toString()).apply()
     }
 
-    // ── Tab Groups ────────────────────────────────────────────────
+    // -- Tab Groups ------------------------------------------------
     fun getTabGroups(): List<TabGroup> {
         val json = prefs.getString("tab_groups", "[]") ?: "[]"
         return try {
@@ -389,14 +394,14 @@ class StorageService(context: Context) {
         prefs.edit().putString("tab_groups", result.toString()).apply()
     }
 
-    // ── Theme ─────────────────────────────────────────────────────
+    // -- Theme -----------------------------------------------------
     fun getThemePreset(): String = prefs.getString("theme_preset", "system") ?: "system"
     fun setThemePreset(preset: String) = prefs.edit().putString("theme_preset", preset).apply()
 
     fun getAccentColor(): Long = prefs.getLong("accent_color", 0xFF3B82F6)
     fun setAccentColor(color: Long) = prefs.edit().putLong("accent_color", color).apply()
 
-    // ── Downloads Tracking ────────────────────────────────────────
+    // -- Downloads Tracking ----------------------------------------
     fun getTrackedDownloads(): List<DownloadInfo> {
         val json = prefs.getString("tracked_downloads", "[]") ?: "[]"
         return try {
@@ -435,7 +440,7 @@ class StorageService(context: Context) {
         prefs.edit().remove("tracked_downloads").apply()
     }
 
-    // ── Helpers ───────────────────────────────────────────────────
+    // -- Helpers ---------------------------------------------------
     private fun extractDomain(url: String): String {
         return try {
             java.net.URI(url).host?.removePrefix("www.") ?: "google.com"

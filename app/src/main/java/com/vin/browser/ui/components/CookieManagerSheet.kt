@@ -38,19 +38,35 @@ fun CookieManagerSheet(
     var allCookies by remember { mutableStateOf<List<CookieEntry>>(emptyList()) }
     var cookieCount by remember { mutableIntStateOf(0) }
 
-    LaunchedEffect(domain) {
+    // CookieManager expects a full URL (scheme + host); passing the bare domain
+    // like "youtube.com" returns nothing on many WebView builds. Also probe both
+    // schemes -- session cookies can live under http:// on legacy sites.
+    val siteUrl = remember(domain) {
+        if (domain.startsWith("http://") || domain.startsWith("https://")) domain
+        else "https://$domain"
+    }
+    val altUrl = remember(siteUrl) {
+        if (siteUrl.startsWith("https://")) "http://${siteUrl.removePrefix("https://")}" else null
+    }
+
+    fun readCookies(): List<CookieEntry> {
         val cookies = mutableListOf<CookieEntry>()
-        val rawCookies = cookieManager.getCookie(domain)
-        if (!rawCookies.isNullOrBlank()) {
-            rawCookies.split(";").forEach { single ->
+        val raw = (cookieManager.getCookie(siteUrl) ?: "") +
+            (altUrl?.let { cookieManager.getCookie(it) } ?: "")
+        if (raw.isNotBlank()) {
+            raw.split(";").distinct().forEach { single ->
                 val parts = single.trim().split("=", limit = 2)
                 if (parts.size == 2) {
                     cookies.add(CookieEntry(parts[0].trim(), parts[1].trim(), domain))
                 }
             }
         }
-        allCookies = cookies
-        cookieCount = cookies.size
+        return cookies.distinctBy { it.name }
+    }
+
+    LaunchedEffect(domain) {
+        allCookies = readCookies()
+        cookieCount = allCookies.size
     }
 
     ModalBottomSheet(
@@ -164,7 +180,18 @@ fun CookieManagerSheet(
             ) {
                 OutlinedButton(
                     onClick = {
-                        cookieManager.setCookie(domain, "")
+                        // WebView has no "delete cookie by name" API; the standard
+                        // technique is overwriting each cookie with an expired
+                        // empty value, then flushing to disk.
+                        allCookies.forEach { cookie ->
+                            runCatching {
+                                cookieManager.setCookie(
+                                    siteUrl,
+                                    "${cookie.name}=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+                                )
+                            }
+                        }
+                        cookieManager.flush()
                         allCookies = emptyList()
                         cookieCount = 0
                     },

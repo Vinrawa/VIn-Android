@@ -60,7 +60,7 @@ class AdBlockEngineTest {
     }
 
     @Test fun unsupportedOptionsDoNotBecomeBroadDomainBlocks() {
-        val e = engine("||cdn.example^\$script\n||images.example^\$image\n||other.example^\$unknown-option")
+        val e = engine("||cdn.example^\$script\n||images.example^\$image\n||other.example^\$ unknown-option")
         assertNull(e.block("https://cdn.example/styles.css"))
         assertNull(e.block("https://images.example/app.js"))
         assertNull(e.block("https://other.example/content.js"))

@@ -22,7 +22,10 @@ data class SearchResult(
     val engineName: String,
     val isOfficial: Boolean = false,
     val isSmallWeb: Boolean = false,
-    val score: Int = 0
+    val score: Int = 0,
+    val providerKey: String = "",    // stable provider id (used by the diversity cap)
+    val providerPosition: Int = 0,   // rank inside its own provider (position decay)
+    val engagement: Int = 0          // raw upvotes/stars/SE score; log-scaled by ranker
 )
 
 data class TabState(
@@ -60,8 +63,9 @@ data class SiteTrustInfo(
     val sslExpireOn: String = "N/A",
     val encryption: String = "TLS 1.3 AES-256-GCM",
     val trackersBlocked: Int = 0,
-    val safetyRating: String = "Verified Safe & Secure",
-    val phishingRisk: String = "Low"
+    // Honest defaults: trust is never fabricated -- see TrustEvaluator.
+    val safetyRating: String = "Not verified",
+    val phishingRisk: String = "Unknown"
 )
 
 data class SiteControlSettings(

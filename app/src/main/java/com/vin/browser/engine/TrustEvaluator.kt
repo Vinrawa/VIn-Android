@@ -30,18 +30,21 @@ object TrustEvaluator {
         val isTrusted = trustedDomains.any { domain == it || domain.endsWith(".$it") }
         val isPhishing = knownPhishingPatterns.any { domain.contains(it) }
 
+        // HONEST labels only: we can verify TLS state and flag known phishing
+        // patterns. We canNOT claim any site is "verified safe" -- a green badge
+        // for unknown domains would be fabricated trust.
         val safetyRating = when {
-            isPhishing -> "Dangerous - Suspected Phishing"
+            isPhishing -> "Dangerous - Phishing pattern detected"
             !isHttps -> "Not Secure - Unencrypted HTTP"
-            isTrusted -> "Verified Safe & Secure"
-            else -> "Standard Security"
+            isTrusted -> "HTTPS - Encrypted (well-known domain)"
+            else -> "HTTPS - Encrypted"
         }
 
+        // "Risk" cannot actually be measured from the URL; only the pattern match
+        // is a real signal. Everything else is reported as unknown, not "Low".
         val phishingRisk = when {
             isPhishing -> "High"
-            isTrusted -> "Very Low"
-            isHttps -> "Low"
-            else -> "Medium"
+            else -> "Unknown"
         }
 
         // Extract REAL SSL Certificate details if available

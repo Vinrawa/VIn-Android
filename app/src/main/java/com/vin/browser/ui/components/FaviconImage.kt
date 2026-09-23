@@ -40,6 +40,12 @@ private fun faviconInsetFor(size: Dp): Dp = when {
 /**
  * Site icon loader with real high-resolution brand favicon rendering
  * and typographic fallback.
+ *
+ * PRIVACY: favicons are fetched from DuckDuckGo's icon proxy, NOT Google's
+ * s2 service -- previously every domain the user touched (including incognito
+ * tabs, speed dials, history rows and search results) was disclosed to Google
+ * as a favicon request. [isPrivate] skips the network entirely: private tabs
+ * render the typographic fallback only.
  */
 @Composable
 fun FaviconImage(
@@ -51,12 +57,15 @@ fun FaviconImage(
     fallbackLetter: String = domain.take(1).uppercase(),
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHighest,
     contentColor: Color = MaterialTheme.colorScheme.primary,
+    isPrivate: Boolean = false
 ) {
     val host = remember(domain) { hostOf(domain) }
     val inset = remember(size) { faviconInsetFor(size) }
 
-    // High-resolution 128px PNG favicon resolver
-    val faviconUrl = "https://www.google.com/s2/favicons?domain=$host&sz=128"
+    // DuckDuckGo high-resolution icon proxy (no query strings, no user profile)
+    val faviconUrl = "https://icons.duckduckgo.com/ip3/$host.ico"
+    // Never fetch for private surfaces or blank hosts; letter fallback renders below.
+    val mayFetchRemotely = !isPrivate && host.isNotBlank() && !host.contains(" ")
 
     Box(
         modifier = modifier
@@ -85,18 +94,20 @@ fun FaviconImage(
                 )
             )
 
-            // Real high-resolution brand favicon
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(faviconUrl)
-                    .crossfade(true)
-                    .build(),
-                contentDescription = "$host logo",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(inset)
-            )
+            if (mayFetchRemotely) {
+                // Real high-resolution brand favicon
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(faviconUrl)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = "$host logo",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(inset)
+                )
+            }
         }
     }
 }

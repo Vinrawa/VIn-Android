@@ -36,17 +36,29 @@ class MediaPlaybackService : Service() {
         var onMediaTogglePlayPauseRequested: (() -> Unit)? = null
         var onMediaPauseRequested: (() -> Unit)? = null
 
+        /**
+         * Every service start goes through this: on O+ a background process cannot
+         * call startService() (IllegalStateException). startForegroundService is
+         * always safe, and onStartCommand() below guarantees startForeground() is
+         * reached in every branch so the ANR/crash contract is never violated.
+         */
+        private fun launch(context: Context, intent: Intent) {
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (_: Exception) { }
+        }
+
         fun start(context: Context, title: String, domain: String) {
             val intent = Intent(context, MediaPlaybackService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_TITLE, title)
                 putExtra(EXTRA_DOMAIN, domain)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
-            }
+            launch(context, intent)
         }
 
         fun notifyPlaying(context: Context, title: String, domain: String) {
@@ -55,21 +67,22 @@ class MediaPlaybackService : Service() {
                 putExtra(EXTRA_TITLE, title)
                 putExtra(EXTRA_DOMAIN, domain)
             }
-            context.startService(intent)
+            launch(context, intent)
         }
 
         fun notifyPaused(context: Context) {
             val intent = Intent(context, MediaPlaybackService::class.java).apply {
                 action = ACTION_MEDIA_PAUSED
             }
-            context.startService(intent)
+            launch(context, intent)
         }
 
         fun stop(context: Context) {
+            if (!isServiceRunning) return // never spawn a foreground service just to stop it
             val intent = Intent(context, MediaPlaybackService::class.java).apply {
                 action = ACTION_STOP
             }
-            context.startService(intent)
+            launch(context, intent)
         }
     }
 
@@ -109,26 +122,40 @@ class MediaPlaybackService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
 
+        // Any branch that can be reached via startForegroundService() must lead to
+        // startForeground() within 5s, otherwise the system crashes the app. The
+        // stop/toggle/state branches below only skip startForeground when the
+        // service is ALREADY foreground (isServiceRunning == true).
         when (action) {
             ACTION_STOP -> {
                 onMediaPauseRequested?.invoke()
-                stopPlaybackService()
+                if (isServiceRunning) {
+                    stopPlaybackService()
+                }
                 return START_NOT_STICKY
             }
             ACTION_TOGGLE_PLAY -> {
-                onMediaTogglePlayPauseRequested?.invoke()
+                if (isServiceRunning) {
+                    onMediaTogglePlayPauseRequested?.invoke()
+                }
                 return START_STICKY
             }
             ACTION_MEDIA_PLAYING -> {
                 isMediaPlaying = true
                 currentTitle = intent.getStringExtra(EXTRA_TITLE) ?: currentTitle
                 currentDomain = intent.getStringExtra(EXTRA_DOMAIN) ?: currentDomain
+                if (!isServiceRunning) {
+                    promoteToForeground()
+                }
                 updatePlaybackState(PlaybackStateCompat.STATE_PLAYING)
                 updateNotification()
                 return START_STICKY
             }
             ACTION_MEDIA_PAUSED -> {
                 isMediaPlaying = false
+                if (!isServiceRunning) {
+                    promoteToForeground()
+                }
                 updatePlaybackState(PlaybackStateCompat.STATE_PAUSED)
                 updateNotification()
                 return START_STICKY
@@ -139,10 +166,15 @@ class MediaPlaybackService : Service() {
         currentDomain = intent?.getStringExtra(EXTRA_DOMAIN) ?: "ViN Browser"
         isMediaPlaying = true
 
-        acquireWakeLock()
+        promoteToForeground()
         updatePlaybackState(PlaybackStateCompat.STATE_PLAYING)
-        val notification = buildNotification(currentTitle, currentDomain, isMediaPlaying)
+        return START_STICKY
+    }
 
+    /** Idempotently enters foreground mode with the current media notification. */
+    private fun promoteToForeground() {
+        acquireWakeLock()
+        val notification = buildNotification(currentTitle, currentDomain, isMediaPlaying)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
                 NOTIFICATION_ID,
@@ -152,9 +184,7 @@ class MediaPlaybackService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-
         isServiceRunning = true
-        return START_STICKY
     }
 
     private fun updatePlaybackState(state: Int) {
@@ -239,7 +269,7 @@ class MediaPlaybackService : Service() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(title)
-            .setContentText("Playing in background • $domain")
+            .setContentText("Playing in background * $domain")
             .setContentIntent(openAppPendingIntent)
             .setOngoing(isPlaying)
             .setPriority(NotificationCompat.PRIORITY_LOW)

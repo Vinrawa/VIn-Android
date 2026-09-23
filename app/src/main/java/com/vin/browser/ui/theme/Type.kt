@@ -8,7 +8,7 @@ import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.sp
 
 /**
- * Type scale. Sizes are deliberately a small set of steps — the old UI used
+ * Type scale. Sizes are deliberately a small set of steps -- the old UI used
  * 10/11/12/13/14/15/16/18/24/38sp with ad-hoc weights, which is what made the
  * hierarchy read as noise.
  */

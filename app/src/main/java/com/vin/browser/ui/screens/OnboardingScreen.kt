@@ -51,7 +51,7 @@ fun OnboardingScreen(
         color = scheme.background,
         modifier = modifier
             .fillMaxSize()
-            // Tap-blocker: onboarding composes OVER the interactive Home screen —
+            // Tap-blocker: onboarding composes OVER the interactive Home screen --
             // without this, taps in blank areas beside the engine grid fall
             // through to the omnibox / speed dials underneath
             .pointerInput(Unit) { detectTapGestures { } }
@@ -153,7 +153,7 @@ fun OnboardingScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        // Hero emblem — Sizes.heroEmblem (the app's emblem scale);
+                        // Hero emblem -- Sizes.heroEmblem (the app's emblem scale);
                         // icon keeps the original ~53% proportion
                         Box(
                             modifier = Modifier
@@ -188,7 +188,7 @@ fun OnboardingScreen(
                 }
             }
 
-            // CTA — pill button family, 48dp
+            // CTA -- pill button family, 48dp
             Button(
                 onClick = {
                     if (pagerState.currentPage == 0) {
@@ -245,7 +245,7 @@ private fun EngineOptionCard(
             Spacer(Modifier.width(Space.sm))
             Text(
                 name,
-                style = MaterialTheme.typography.bodyMedium, // weight swap removed —
+                style = MaterialTheme.typography.bodyMedium, // weight swap removed --
                 color = scheme.onSurface,                     // selection carried by
                 modifier = Modifier.weight(1f)                // border + container + check
             )

@@ -63,7 +63,7 @@ fun SearchOverlaySheet(
                 .padding(horizontal = Space.lg)
                 .padding(top = Space.md, bottom = Space.xl)
         ) {
-            // Search Input Row — same pill family as the home omnibox
+            // Search Input Row -- same pill family as the home omnibox
             Surface(
                 shape = RoundedCornerShape(Sizes.omniboxRadius),
                 color = scheme.surfaceContainerHighest,

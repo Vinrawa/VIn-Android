@@ -1,18 +1,23 @@
 package com.vin.browser.ui.screens
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.net.http.SslCertificate
 import android.os.Build
 import android.os.Environment
 import android.view.HapticFeedbackConstants
+import android.view.View
+import android.view.ViewGroup
 import android.webkit.*
 import android.widget.Toast
 import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewFeature
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -28,12 +33,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -99,6 +106,7 @@ fun WebViewScreen(
     isIncognito: Boolean = false,
     isForcedDark: Boolean = false,
     isSafeBrowsing: Boolean = true,
+    isHttpsUpgrade: Boolean = true,
     siteSettings: SiteControlSettings,
     findQuery: String = "",
     findNextTrigger: Int = 0,
@@ -107,19 +115,25 @@ fun WebViewScreen(
     onProgressUpdate: (Int) -> Unit = {},
     onWebViewCreated: (WebView) -> Unit = {},
     onPageStarted: (String) -> Unit,
-    onPageFinished: (String, String, SslCertificate?, Bitmap?) -> Unit,
+    onPageFinished: (title: String, url: String, cert: SslCertificate?, icon: Bitmap?, isPrivate: Boolean) -> Unit,
+    onPermissionNeeded: (PermissionRequest) -> Unit = {},
     onTrackerBlocked: () -> Unit,
     onOpenInBackgroundTab: (String) -> Unit = {},
     onOpenInForegroundTab: (String) -> Unit = {},
+    userScriptsProvider: () -> List<com.vin.browser.data.UserScript> = { emptyList() },
     modifier: Modifier = Modifier
 ) {
     var linkTarget by remember { mutableStateOf<com.vin.browser.ui.components.LinkTarget?>(null) }
     val onLinkContext: (com.vin.browser.ui.components.LinkTarget) -> Unit = { linkTarget = it }
     var currentWebView by remember { mutableStateOf<WebView?>(null) }
     val currentSettings by rememberUpdatedState(siteSettings)
+    val httpsState by rememberUpdatedState(isHttpsUpgrade)
+    val userScriptsState by rememberUpdatedState(userScriptsProvider)
+    val permissionHandler by rememberUpdatedState(onPermissionNeeded)
     val scheme = MaterialTheme.colorScheme
     val lifecycleOwner = LocalLifecycleOwner.current
-    // Last WebView background color applied (null until factory ran) — diff-check anchor
+    val context = androidx.compose.ui.platform.LocalContext.current
+    // Last WebView background color applied (null until factory ran) -- diff-check anchor
     var appliedWebBg by remember { mutableStateOf<Int?>(null) }
     val view = LocalView.current
 
@@ -130,12 +144,73 @@ fun WebViewScreen(
     var startEdgeDrag by remember { mutableStateOf(0f) }
     var endEdgeDrag by remember { mutableStateOf(0f) }
 
+    // Fullscreen video state (WebChromeClient custom view)
+    var customView by remember { mutableStateOf<View?>(null) }
+
+    fun enterFullscreen(v: View, callback: WebChromeClient.CustomViewCallback) {
+        if (customView != null) { callback.onCustomViewHidden(); return }
+        customView = v
+        (v.parent as? ViewGroup)?.removeView(v)
+        try {
+            val act = context as? Activity
+            act?.window?.let { w ->
+                WindowCompat.setDecorFitsSystemWindows(w, false)
+                WindowInsetsControllerCompat(w, w.decorView).apply {
+                    systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                    hide(WindowInsetsCompat.Type.systemBars())
+                }
+            }
+        } catch (_: Exception) { }
+    }
+
+    fun exitFullscreen() {
+        try {
+            val act = context as? Activity
+            act?.window?.let { w ->
+                WindowInsetsControllerCompat(w, w.decorView).show(WindowInsetsCompat.Type.systemBars())
+                WindowCompat.setDecorFitsSystemWindows(w, true)
+            }
+        } catch (_: Exception) { }
+        customView = null
+    }
+
+    // Hardware back exits fullscreen video first (deepest BackHandler wins)
+    BackHandler(enabled = customView != null) { exitFullscreen() }
+
+    // Restore system bars if the composable leaves while fullscreen
+    DisposableEffect(Unit) {
+        onDispose { if (customView != null) exitFullscreen() }
+    }
+
     // Latest values readable inside pointerInput / chrome-client closures
     val onProgressCallback by rememberUpdatedState(onProgressUpdate)
     val ptrRefreshingRef by rememberUpdatedState(ptrRefreshing)
     val webViewRef by rememberUpdatedState(currentWebView)
 
     val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+    /** Dispatches non-web schemes to external apps, honoring the per-site setting. */
+    fun dispatchExternalUri(target: Uri) {
+        try {
+            val site = currentSettings
+            val s = target.scheme?.lowercase() ?: return
+            // Standard app intents open by default; exotic schemes only when the
+            // user explicitly allowed "Open Apps" for this site.
+            val standard = s in setOf("mailto", "tel", "sms", "geo", "market", "youtube", "whatsapp", "tg")
+            if (!standard && !site.openApps) return
+            val intent = if (s == "intent") {
+                Intent.parseUri(target.toString(), Intent.URI_INTENT_SCHEME)
+            } else {
+                Intent(Intent.ACTION_VIEW, target)
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            // Defensive: an intent:// with a browser component is a known redirect trick
+            if (intent.component != null && intent.component?.packageName != context.packageName) {
+                return
+            }
+            context.startActivity(intent)
+        } catch (_: Exception) { }
+    }
 
     // Handle Media Play/Pause toggle and Stop actions from background media notification
     LaunchedEffect(Unit) {
@@ -174,8 +249,8 @@ fun WebViewScreen(
     Column(modifier = modifier.fillMaxSize().background(scheme.background)) {
         Box(modifier = Modifier.fillMaxSize()) {
             AndroidView(
-                factory = { context ->
-                    com.vin.browser.engine.VinWebView(context).apply {
+                factory = { ctx ->
+                    com.vin.browser.engine.VinWebView(ctx).apply {
                         currentWebView = this
                         isBackgroundPlayActive = (isBackgroundPlay && currentSettings.backgroundPlay)
                         onWebViewCreated(this)
@@ -187,9 +262,12 @@ fun WebViewScreen(
                             // Incognito: no WebView databases (form/history persistence)
                             databaseEnabled = !isIncognito
 
-                            // Full-width Responsive Mobile Viewport (false in mobile mode so content fills 100% width naturally)
+                            // Chrome-like viewport: wide layout window + overview scaling.
+                            // Pages with a proper <meta viewport> render at device width;
+                            // legacy pages without one fit-to-width instead of being
+                            // horizontally cropped/stretched.
                             useWideViewPort = true
-                            loadWithOverviewMode = currentSettings.desktopMode
+                            loadWithOverviewMode = true
                             textZoom = 100
                             setSupportZoom(true)
                             builtInZoomControls = true
@@ -208,15 +286,17 @@ fun WebViewScreen(
                             loadsImagesAutomatically = currentSettings.imagesEnabled && !isLiteMode
                             blockNetworkImage = !currentSettings.imagesEnabled || isLiteMode
 
-                            userAgentString = if (currentSettings.desktopMode) desktopUserAgent else mobileUserAgent(context)
+                            userAgentString = if (currentSettings.desktopMode) desktopUserAgent else mobileUserAgent(ctx)
                         }
 
                         if (isIncognito) {
                             // Deprecated no-op in modern WebView but harmless; form data must not persist in private mode
                             try { settings.saveFormData = false } catch (_: Exception) { }
-                            // Keep domStorage (login pages break without it) but fence off third-party cookies
-                            CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
                         }
+                        // Block third-party cookies for EVERY tab (first-party cookies
+                        // still work). Incognito additionally wipes session cookies when
+                        // its last tab closes (BrowserViewModel.wipeIncognitoData).
+                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
 
                         // Forced AMOLED Dark Mode (settings apply live, no reload needed)
                         applyForceDarkSettings(this, isForcedDark)
@@ -228,7 +308,7 @@ fun WebViewScreen(
 
                         // Native Media Bridge for Background Playback Service
                         addJavascriptInterface(
-                            MediaBridge(context) { isBackgroundPlay && currentSettings.backgroundPlay },
+                            MediaBridge(ctx) { isBackgroundPlay && currentSettings.backgroundPlay },
                             BackgroundAudioEngine.JS_BRIDGE_NAME
                         )
 
@@ -266,20 +346,22 @@ fun WebViewScreen(
                                         setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                                         setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
                                     }
-                                    val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+                                    val dm = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
                                     dm.enqueue(request)
-                                    Toast.makeText(context, "Download started...", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(ctx, "Download started...", Toast.LENGTH_SHORT).show()
                                 } catch (_: Exception) {
-                                    Toast.makeText(context, "Download error", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(ctx, "Download error", Toast.LENGTH_SHORT).show()
                                 }
                             } else {
-                                Toast.makeText(context, "Downloads blocked for this site", Toast.LENGTH_SHORT).show()
+                                Toast.makeText(ctx, "Downloads blocked for this site", Toast.LENGTH_SHORT).show()
                             }
                         }
 
                         webViewClient = VinWebViewClient(
                             engine = AdBlockEngine.instance,
                             isBackgroundPlayEnabled = { isBackgroundPlay && currentSettings.backgroundPlay },
+                            isHttpsUpgradeEnabled = { httpsState },
+                            userScriptsProvider = { userScriptsState() },
                             onStatsUpdated = {
                                 onTrackerBlocked()
                             },
@@ -289,9 +371,10 @@ fun WebViewScreen(
                             onPopupBlocked = { blockedUrl ->
                                 try {
                                     val host = Uri.parse(blockedUrl)?.host?.removePrefix("www.")?.take(30) ?: "site"
-                                    Toast.makeText(context, "Blocked redirect to $host", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(ctx, "Blocked redirect to $host", Toast.LENGTH_SHORT).show()
                                 } catch (_: Exception) { }
                             },
+                            onExternalScheme = { target -> dispatchExternalUri(target) },
                             onPageStartedCallback = { loadUrl ->
                                 onPageStarted(loadUrl)
                             },
@@ -307,7 +390,7 @@ fun WebViewScreen(
                                     TabThumbnailManager.captureFromWebView(tabId, this)
                                 }
                                 // Incognito pages persist no favicon either
-                                onPageFinished(title, finalUrl, cert, if (isIncognito) null else icon)
+                                onPageFinished(title, finalUrl, cert, if (isIncognito) null else icon, isIncognito)
                             }
                         )
 
@@ -320,7 +403,7 @@ fun WebViewScreen(
                                 isUserGesture: Boolean,
                                 resultMsg: android.os.Message?
                             ): Boolean {
-                                val temp = WebView(context).apply { settings.javaScriptEnabled = true }
+                                val temp = WebView(ctx).apply { settings.javaScriptEnabled = true }
                                 temp.webViewClient = object : WebViewClient() {
                                     override fun shouldOverrideUrlLoading(
                                         v: WebView?,
@@ -342,30 +425,33 @@ fun WebViewScreen(
                             override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                 onProgressCallback(newProgress)
                                 localProgress = newProgress
-                                // Reload finished → arm pull-to-refresh for the next gesture
+                                // Reload finished ? arm pull-to-refresh for the next gesture
                                 if (newProgress >= 100) ptrRefreshing = false
                             }
 
                             override fun onReceivedIcon(view: WebView?, icon: Bitmap?) {
                                 super.onReceivedIcon(view, icon)
                                 if (!isIncognito && icon != null && view?.url != null) {
-                                    onPageFinished(view.title ?: "", view.url ?: "", view.certificate, icon)
+                                    onPageFinished(view.title ?: "", view.url ?: "", view.certificate, icon, isIncognito)
                                 }
                             }
 
+                            // Fullscreen <video> support: the player's fullscreen button
+                            // swaps in a native full-screen overlay view (hidden system
+                            // bars, back exits). Previously this did nothing at all.
+                            override fun onShowCustomView(v: View, callback: CustomViewCallback) {
+                                enterFullscreen(v, callback)
+                            }
+
+                            override fun onHideCustomView() {
+                                exitFullscreen()
+                            }
+
+                            // Site permissions (camera / mic / geolocation) are forwarded
+                            // to MainActivity which owns runtime permissions + the "Ask" dialog.
                             override fun onPermissionRequest(request: PermissionRequest?) {
                                 if (request == null) return
-                                val resources = request.resources
-                                var shouldGrant = false
-                                for (res in resources) {
-                                    if (res == PermissionRequest.RESOURCE_VIDEO_CAPTURE && currentSettings.camera == "Allow") shouldGrant = true
-                                    if (res == PermissionRequest.RESOURCE_AUDIO_CAPTURE && currentSettings.microphone == "Allow") shouldGrant = true
-                                }
-                                if (shouldGrant) {
-                                    request.grant(resources)
-                                } else {
-                                    request.deny()
-                                }
+                                permissionHandler(request)
                             }
 
                             override fun onGeolocationPermissionsShowPrompt(
@@ -380,6 +466,7 @@ fun WebViewScreen(
                 },
                 update = { webView ->
                     currentWebView = webView
+
                     if (webView is com.vin.browser.engine.VinWebView) {
                         webView.isBackgroundPlayActive = (isBackgroundPlay && currentSettings.backgroundPlay)
                     }
@@ -397,12 +484,6 @@ fun WebViewScreen(
                     }
                     if (webView.settings.cacheMode != targetCache) {
                         webView.settings.cacheMode = targetCache
-                    }
-
-                    val targetOverview = currentSettings.desktopMode
-                    if (webView.settings.loadWithOverviewMode != targetOverview) {
-                        webView.settings.loadWithOverviewMode = targetOverview
-                        webView.reload()
                     }
 
                     val targetUa = if (currentSettings.desktopMode) desktopUserAgent else mobileUserAgent(webView.context)
@@ -442,6 +523,20 @@ fun WebViewScreen(
                 modifier = Modifier.fillMaxSize()
             )
 
+            // Fullscreen video overlay: covers everything (incl. browser chrome)
+            customView?.let { cv ->
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                ) {
+                    AndroidView(
+                        factory = { cv },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+
             // Top load progress line (page navigation + pull-to-refresh reload)
             if (ptrRefreshing || localProgress in 1..99) {
                 LinearProgressIndicator(
@@ -458,7 +553,7 @@ fun WebViewScreen(
                 )
             }
 
-            // Pull-to-refresh top zone: 26dp top strip overlaps sticky headers — tradeoff accepted.
+            // Pull-to-refresh top zone: 26dp top strip overlaps sticky headers -- tradeoff accepted.
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
@@ -492,7 +587,7 @@ fun WebViewScreen(
                     }
             )
 
-            // Start (left) edge strip: swipe right → go back
+            // Start (left) edge strip: swipe right ? go back
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterStart)
@@ -507,7 +602,7 @@ fun WebViewScreen(
                                 drag(down.id) { change ->
                                     val dx = change.positionChange().x
                                     val dy = change.positionChange().y
-                                    // Vertical intent → don't consume, let the page scroll
+                                    // Vertical intent ? don't consume, let the page scroll
                                     if (valid && abs(dy) > abs(dx)) valid = false
                                     if (valid) {
                                         totalDx += dx
@@ -552,7 +647,7 @@ fun WebViewScreen(
                 }
             }
 
-            // End (right) edge strip: swipe left → go forward
+            // End (right) edge strip: swipe left ? go forward
             Box(
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
@@ -567,7 +662,7 @@ fun WebViewScreen(
                                 drag(down.id) { change ->
                                     val dx = change.positionChange().x
                                     val dy = change.positionChange().y
-                                    // Vertical intent → don't consume, let the page scroll
+                                    // Vertical intent ? don't consume, let the page scroll
                                     if (valid && abs(dy) > abs(dx)) valid = false
                                     if (valid) {
                                         totalDx += dx

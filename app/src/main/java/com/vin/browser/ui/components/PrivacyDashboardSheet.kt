@@ -34,9 +34,13 @@ fun PrivacyDashboardSheet(
     currentDomain: String,
     isBackgroundPlay: Boolean,
     isSafeBrowsing: Boolean = true,
+    isHttpsUpgrade: Boolean = true,
+    isRemoteSuggestions: Boolean = true,
     lastFilterSync: Long = 0L,
     onBackgroundPlayToggle: (Boolean) -> Unit,
     onSafeBrowsingToggle: () -> Unit,
+    onHttpsUpgradeToggle: () -> Unit,
+    onRemoteSuggestionsToggle: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -57,8 +61,9 @@ fun PrivacyDashboardSheet(
     var adBlockOn by remember { mutableStateOf(storage.isGlobalAdBlockEnabled()) }
     var cosmeticOn by remember { mutableStateOf(storage.isCosmeticFilterEnabled()) }
     var trackerBlockOn by remember { mutableStateOf(storage.isTrackerBlockEnabled()) }
-    var httpsUpgradeOn by remember { mutableStateOf(storage.isHttpsUpgradeEnabled()) }
     var cryptoBlockOn by remember { mutableStateOf(storage.isCryptoBlockEnabled()) }
+    // httpsUpgradeOn / remoteSuggestionsOn now live in the ViewModel so the
+    // WebViewClient and omnibox observe the SAME value this sheet writes.
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -95,7 +100,7 @@ fun PrivacyDashboardSheet(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        "ViN Shield Active • Real-time Protection",
+                        "ViN Shield Active * Real-time Protection",
                         color = brand.secure,
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Medium
@@ -244,7 +249,7 @@ fun PrivacyDashboardSheet(
                         HorizontalDivider(color = scheme.outlineVariant, thickness = 0.5.dp)
                         Spacer(Modifier.height(Space.xs))
                         Text(
-                            text = "Current Site: $currentDomain (Verified Safe)",
+                            text = "Current Site: $currentDomain",
                             color = brand.secure,
                             style = MaterialTheme.typography.bodySmall,
                             fontWeight = FontWeight.Medium
@@ -316,16 +321,14 @@ fun PrivacyDashboardSheet(
 
                     HorizontalDivider(color = scheme.outlineVariant, thickness = 0.5.dp)
 
-                    // Option 4: HTTPS Auto-Upgrade
+                    // Option 4: HTTPS Auto-Upgrade (rewrites main-frame http
+                    // navigations to https inside VinWebViewClient)
                     PrivacyControlToggle(
                         icon = Icons.Filled.Https,
-                        title = "HTTPS Everywhere Auto-Upgrade",
-                        subtitle = "Forces encrypted connections on all websites",
-                        checked = httpsUpgradeOn,
-                        onCheckedChange = {
-                            httpsUpgradeOn = it
-                            storage.setHttpsUpgrade(it)
-                        }
+                        title = "HTTPS Auto-Upgrade",
+                        subtitle = "Rewrites http:// navigations to encrypted https://",
+                        checked = isHttpsUpgrade,
+                        onCheckedChange = { onHttpsUpgradeToggle() }
                     )
 
                     HorizontalDivider(color = scheme.outlineVariant, thickness = 0.5.dp)
@@ -363,6 +366,17 @@ fun PrivacyDashboardSheet(
                         subtitle = "Warns before you visit dangerous or deceptive sites",
                         checked = isSafeBrowsing,
                         onCheckedChange = { onSafeBrowsingToggle() }
+                    )
+
+                    HorizontalDivider(color = scheme.outlineVariant, thickness = 0.5.dp)
+
+                    // Option 8: Remote suggestions (keystroke privacy)
+                    PrivacyControlToggle(
+                        icon = Icons.Filled.EditNote,
+                        title = "Search Suggestions",
+                        subtitle = "Sends what you type to DuckDuckGo for autocomplete. Off = local history only.",
+                        checked = isRemoteSuggestions,
+                        onCheckedChange = { onRemoteSuggestionsToggle() }
                     )
                 }
             }

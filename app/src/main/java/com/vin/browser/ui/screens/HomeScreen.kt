@@ -63,7 +63,7 @@ fun HomeScreen(
             .fillMaxSize()
             .background(scheme.background)
     ) {
-        // ── Compact Top Bar: engine icon + omnibox + mic + QR ──
+        // -- Compact Top Bar: engine icon + omnibox + mic + QR --
         Surface(
             color = scheme.surfaceContainerHigh,
             modifier = Modifier.fillMaxWidth()
@@ -124,7 +124,7 @@ fun HomeScreen(
             }
         }
 
-        // ── Speed Dial Section ──
+        // -- Speed Dial Section --
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -189,7 +189,7 @@ fun HomeScreen(
         }
     }
 
-    // ── Context Action BottomSheet for Edit / Delete ──
+    // -- Context Action BottomSheet for Edit / Delete --
     selectedItemForAction?.let { item ->
         ModalBottomSheet(
             onDismissRequest = { selectedItemForAction = null },
@@ -234,7 +234,7 @@ fun HomeScreen(
         }
     }
 
-    // ── Add Shortcut Dialog ──
+    // -- Add Shortcut Dialog --
     if (showAddDialog) {
         var name by remember { mutableStateOf("") }
         var url by remember { mutableStateOf("") }
@@ -277,7 +277,7 @@ fun HomeScreen(
         )
     }
 
-    // ── Edit Shortcut Dialog ──
+    // -- Edit Shortcut Dialog --
     editingItem?.let { item ->
         var name by remember { mutableStateOf(item.title) }
         var url by remember { mutableStateOf(item.url) }
@@ -321,7 +321,7 @@ fun HomeScreen(
     }
 }
 
-// ── Horizontal Speed Dial Tile ──
+// -- Horizontal Speed Dial Tile --
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HomeSpeedDialTile(
@@ -375,7 +375,7 @@ private fun HomeSpeedDialTile(
     }
 }
 
-// ── Add Shortcut Tile ──
+// -- Add Shortcut Tile --
 @Composable
 private fun HomeAddTile(onClick: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
@@ -416,7 +416,7 @@ private fun HomeAddTile(onClick: () -> Unit) {
     }
 }
 
-// ── Shared Sheet Action Row ──
+// -- Shared Sheet Action Row --
 @Composable
 private fun SheetActionRow(
     icon: ImageVector,

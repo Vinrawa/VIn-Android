@@ -44,7 +44,7 @@ data class ReaderArticle(
  * Full-screen Reader Mode overlay. Font size (14..24sp) lives only in memory,
  * resetting when the overlay is closed. Pure black background in dark theme for AMOLED.
  *
- * Typography note: body text is USER-SCALED, so it cannot use static type roles —
+ * Typography note: body text is USER-SCALED, so it cannot use static type roles --
  * sizes derive from the slider. This is the app's single documented exception;
  * weights remain fixed constants, never ad-hoc.
  */
@@ -67,7 +67,7 @@ fun ReaderScreen(
             .fillMaxSize()
             .background(backgroundColor)
             // Tap-blocker: Compose passes taps through nodes without pointer
-            // handlers — without this, blank regions of the reader (margins,
+            // handlers -- without this, blank regions of the reader (margins,
             // gaps between paragraphs) tap straight through to the live WebView
             // behind the overlay. Children with their own handlers (LazyColumn
             // scroll, buttons) win hit-testing; only fall-through zones consume.
@@ -75,7 +75,7 @@ fun ReaderScreen(
             .statusBarsPadding()
             .navigationBarsPadding()
     ) {
-        // Chrome row: Close | title | type-size controls — all 48dp icon targets
+        // Chrome row: Close | title | type-size controls -- all 48dp icon targets
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
@@ -122,7 +122,7 @@ fun ReaderScreen(
                 CircularProgressIndicator(color = textColor)
             }
 
-            // Failed state follows the app-wide pattern: icon → gap → message → action
+            // Failed state follows the app-wide pattern: icon ? gap ? message ? action
             isFailed -> Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center

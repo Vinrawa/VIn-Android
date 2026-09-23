@@ -115,7 +115,7 @@ fun TabTraySheet(
             }
             Spacer(Modifier.height(Space.xs))
 
-            // Segmented control — pill family, 40dp
+            // Segmented control -- pill family, 40dp
             Surface(
                 shape = Radius.pill,
                 color = scheme.surfaceContainerHigh,
@@ -158,7 +158,7 @@ fun TabTraySheet(
                 )
             }
 
-            // CTA — pill, 48dp
+            // CTA -- pill, 48dp
             Button(
                 onClick = {
                     view.performHapticFeedback(HapticFeedbackConstants.CONFIRM)
@@ -311,7 +311,7 @@ private fun TabCardItem(
             .clip(RoundedCornerShape(Radius.md))
             .clickable { onClick() }
     ) {
-        // Hibernated tabs read dimmed — their favicon/preview bitmaps were released
+        // Hibernated tabs read dimmed -- their favicon/preview bitmaps were released
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -340,7 +340,7 @@ private fun TabCardItem(
                         modifier = Modifier.size(Sizes.emptyStateIcon)
                     )
                 }
-                // Incognito badge (no preview is ever captured → always visible)
+                // Incognito badge (no preview is ever captured ? always visible)
                 if (tab.isIncognito) {
                     Icon(
                         Icons.Filled.VisibilityOff,
@@ -352,7 +352,7 @@ private fun TabCardItem(
                             .size(Sizes.iconXs)
                     )
                 }
-                // Close — 32dp target, ripple clipped to its circle
+                // Close -- 32dp target, ripple clipped to its circle
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)

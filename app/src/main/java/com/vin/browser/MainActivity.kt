@@ -45,10 +45,10 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val browserVm: BrowserViewModel by viewModels()
 
-    // PiP window state observed by Compose — UI chrome is hidden while in PiP
+    // PiP window state observed by Compose -- UI chrome is hidden while in PiP
     private var isInPipMode by mutableStateOf(false)
 
-    // True only while the web screen is the active surface — auto-PiP must not fire from home/search
+    // True only while the web screen is the active surface -- auto-PiP must not fire from home/search
     @Volatile
     private var isWebScreenActive: Boolean = false
 
@@ -134,6 +134,8 @@ fun VinBrowserRoot(
     val isLiteMode by vm.isLiteMode.collectAsState()
     val isForcedDark by vm.isForcedDark.collectAsState()
     val isSafeBrowsing by vm.isSafeBrowsing.collectAsState()
+    val isHttpsUpgrade by vm.isHttpsUpgrade.collectAsState()
+    val isRemoteSuggestions by vm.isRemoteSuggestions.collectAsState()
     val isBackgroundPlay by vm.isBackgroundPlay.collectAsState()
     val trackersBlocked by vm.trackersBlocked.collectAsState()
     val showMenu by vm.showMenu.collectAsState()
@@ -146,6 +148,7 @@ fun VinBrowserRoot(
     val suggestions by vm.suggestions.collectAsState()
     val showDoctorSheet by vm.showDoctorSheet.collectAsState()
     val doctorMetrics by vm.doctorMetrics.collectAsState()
+    val showQrScanner by vm.showQrScanner.collectAsState()
     val autoTuneResult by vm.autoTuneResult.collectAsState()
     val isTuning by vm.isTuning.collectAsState()
 
@@ -189,27 +192,99 @@ fun VinBrowserRoot(
     // Active Tab Info
     val currentTab = tabs.find { it.id == activeTabId }
 
-    // OS Runtime Permissions Launcher
+    // -- Runtime permissions: requested CONTEXTUALLY, never demanded at startup --
+    // (The old code fired CAMERA+MIC+LOCATION+NOTIFICATIONS at every cold start.)
+    fun hasPermission(p: String): Boolean =
+        androidx.core.content.ContextCompat.checkSelfPermission(context, p) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    // Pending runtime grant that must complete a WEB permission request afterwards
+    var pendingWebPermission by remember {
+        mutableStateOf<android.webkit.PermissionRequest?>(null)
+    }
+    // Web permission waiting on the user's Allow/Deny answer ("Ask" sites)
+    var askWebPermission by remember {
+        mutableStateOf<android.webkit.PermissionRequest?>(null)
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { }
-
-    LaunchedEffect(Unit) {
-        val perms = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            arrayOf(
-                Manifest.permission.CAMERA,
-                Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.ACCESS_FINE_LOCATION,
-                Manifest.permission.POST_NOTIFICATIONS
-            )
-        } else {
-            arrayOf(
-                Manifest.permission.CAMERA,
-                Manifest.permission.RECORD_AUDIO,
-                Manifest.permission.ACCESS_FINE_LOCATION
-            )
+    ) { grants ->
+        val pending = pendingWebPermission
+        pendingWebPermission = null
+        if (pending != null) {
+            if (grants.values.all { it }) pending.grant(pending.resources)
+            else pending.deny()
         }
-        permissionLauncher.launch(perms)
+    }
+
+    fun requestOsPermissions(perms: List<String>, then: android.webkit.PermissionRequest?) {
+        pendingWebPermission = then
+        permissionLauncher.launch(perms.toTypedArray())
+    }
+
+    // Which site-permission resources are being asked for
+    fun resourceNames(request: android.webkit.PermissionRequest): Triple<Boolean, Boolean, Boolean> {
+        val res = request.resources
+        return Triple(
+            res.contains(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE),
+            res.contains(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE),
+            false
+        )
+    }
+
+    // Central handler owned by the Activity (WebView forwards requests here).
+    // [userApproved] is true when the user already answered Allow on the "Ask" dialog.
+    fun handleWebPermissionRequest(request: android.webkit.PermissionRequest, userApproved: Boolean = false) {
+        val (camera, mic, location) = resourceNames(request)
+        val setting = if (camera) siteSettings.camera
+            else if (mic) siteSettings.microphone
+            else if (location) siteSettings.location
+            else "Ask"
+
+        if (setting == "Block") {
+            request.deny()
+            return
+        }
+
+        fun grantOrRequest() {
+            val osPerms = buildList {
+                if (camera) add(Manifest.permission.CAMERA)
+                if (mic) add(Manifest.permission.RECORD_AUDIO)
+                if (location) add(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            val missing = osPerms.filter { !hasPermission(it) }
+            if (missing.isEmpty()) request.grant(request.resources)
+            else requestOsPermissions(missing, request)
+        }
+
+        if (setting == "Allow" || userApproved) {
+            grantOrRequest()
+        } else {
+            // "Ask": surface an in-app dialog BEFORE touching the OS permission
+            askWebPermission = request
+        }
+    }
+
+    // Camera is requested only when the user actually opens the QR scanner
+    LaunchedEffect(showQrScanner) {
+        if (showQrScanner && !hasPermission(Manifest.permission.CAMERA)) {
+            permissionLauncher.launch(arrayOf(Manifest.permission.CAMERA))
+        }
+    }
+
+    // Notification permission is requested the first time the user turns
+    // Background Play ON -- not at every app start.
+    val previousBackgroundPlay = remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(isBackgroundPlay) {
+        val wasOn = previousBackgroundPlay.value
+        previousBackgroundPlay.value = isBackgroundPlay
+        if (wasOn == false && isBackgroundPlay &&
+            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            !hasPermission(Manifest.permission.POST_NOTIFICATIONS)
+        ) {
+            permissionLauncher.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
+        }
     }
 
     // Speech to text voice search launcher
@@ -435,6 +510,7 @@ fun VinBrowserRoot(
                                     isIncognito = currentTab?.isIncognito == true,
                                     isForcedDark = isForcedDark,
                                     isSafeBrowsing = isSafeBrowsing,
+                                    isHttpsUpgrade = isHttpsUpgrade,
                                     siteSettings = siteSettings,
                                     findQuery = findInPageQuery,
                                     findNextTrigger = findNextTrigger,
@@ -446,10 +522,12 @@ fun VinBrowserRoot(
                                     onProgressUpdate = { pageLoadProgress = it },
                                     onWebViewCreated = { activeWebView = it },
                                     onPageStarted = { vm.onPageStarted(it) },
-                                    onPageFinished = { title, url, cert, icon ->
+                                    onPageFinished = { title, url, cert, icon, isPrivate ->
                                         pageLoadProgress = 100
-                                        vm.onPageFinished(title, url, cert, icon)
+                                        vm.onPageFinished(title, url, cert, icon, isPrivate)
                                     },
+                                    onPermissionNeeded = { request -> handleWebPermissionRequest(request) },
+                                    userScriptsProvider = { vm.userScripts.value },
                                     onTrackerBlocked = { vm.refreshTrackerCount() },
                                     onOpenInBackgroundTab = { backgroundUrl -> vm.openInBackgroundTab(backgroundUrl) },
                                     onOpenInForegroundTab = { newTabUrl -> vm.openInNewTab(newTabUrl) },
@@ -490,6 +568,42 @@ fun VinBrowserRoot(
                 )
             }
         }
+    }
+
+    // 0. Site permission "Ask" dialog (camera / mic / location)
+    askWebPermission?.let { request ->
+        val (wantCam, wantMic, wantLoc) = Triple(
+            request.resources.contains(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE),
+            request.resources.contains(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE),
+            true
+        )
+        val what = when {
+            wantCam && wantMic -> "use your camera and microphone"
+            wantCam -> "use your camera"
+            wantMic -> "use your microphone"
+            wantLoc -> "see your location"
+            else -> "access protected features"
+        }
+        AlertDialog(
+            onDismissRequest = {
+                request.deny()
+                askWebPermission = null
+            },
+            title = { Text("Permission request") },
+            text = { Text("$currentDomain wants to $what.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    askWebPermission = null
+                    handleWebPermissionRequest(request, userApproved = true)
+                }) { Text("Allow") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    request.deny()
+                    askWebPermission = null
+                }) { Text("Deny") }
+            }
+        )
     }
 
     // 1. Mobile Search Overlay
@@ -712,9 +826,13 @@ fun VinBrowserRoot(
             currentDomain = currentDomain,
             isBackgroundPlay = isBackgroundPlay,
             isSafeBrowsing = isSafeBrowsing,
+            isHttpsUpgrade = isHttpsUpgrade,
+            isRemoteSuggestions = isRemoteSuggestions,
             lastFilterSync = lastFilterSync,
             onBackgroundPlayToggle = { vm.toggleBackgroundPlay() },
             onSafeBrowsingToggle = { vm.toggleSafeBrowsing() },
+            onHttpsUpgradeToggle = { vm.toggleHttpsUpgrade() },
+            onRemoteSuggestionsToggle = { vm.toggleRemoteSuggestions() },
             onDismiss = { vm.dismissPrivacyDashboard() }
         )
     }
@@ -874,7 +992,6 @@ fun VinBrowserRoot(
     }
 
     // 17. QR Scanner Screen
-    val showQrScanner by vm.showQrScanner.collectAsState()
     if (showQrScanner && !isInPipMode) {
         QrScannerScreen(
             onDismiss = { vm.dismissQrScanner() },

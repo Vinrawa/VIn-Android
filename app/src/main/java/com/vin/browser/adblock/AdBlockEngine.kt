@@ -37,7 +37,7 @@ data class PageStats(
             blockedRequests++
             blockedByCategory[result.rule.category] =
                 (blockedByCategory[result.rule.category] ?: 0) + 1
-            // rough per-category payload estimate — replace with real measured averages once you have device data
+            // rough per-category payload estimate -- replace with real measured averages once you have device data
             estimatedBytesSaved += when (result.rule.category) {
                 BlockCategory.AD -> 45_000L
                 BlockCategory.TRACKER -> 4_000L
@@ -165,6 +165,20 @@ class AdBlockEngine {
             ruleSet = snapshot(FilterListLoader.merge(listOf(baseRules, remoteRules)))
         }
     }
+
+    /**
+     * Replaces the whole base rule set (builtin + bundled + synced lists) with the
+     * given merged result. Used by app bootstrap, which assembles the complete base
+     * set once per process; accumulating via [loadRules] there would double-load
+     * lists that exist both as assets and as synced files.
+     */
+    fun replaceBaseRules(result: FilterParseResult) {
+        synchronized(reloadLock) {
+            baseRules = result
+            ruleSet = snapshot(FilterListLoader.merge(listOf(baseRules, remoteRules)))
+        }
+    }
+
     /** Replace remote rules, retaining bundled rules and both exception sets. */
     fun replaceRemoteRules(result: FilterParseResult) {
         synchronized(reloadLock) {

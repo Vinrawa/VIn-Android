@@ -100,7 +100,7 @@ fun FindInPageBar(
 
             Spacer(Modifier.width(4.dp))
 
-            // Previous Button (▲)
+            // Previous Button (?)
             IconButton(onClick = onPrevious, modifier = Modifier.size(36.dp)) {
                 Icon(
                     Icons.Filled.KeyboardArrowUp,
@@ -110,7 +110,7 @@ fun FindInPageBar(
                 )
             }
 
-            // Next Button (▼)
+            // Next Button (?)
             IconButton(onClick = onNext, modifier = Modifier.size(36.dp)) {
                 Icon(
                     Icons.Filled.KeyboardArrowDown,
@@ -120,7 +120,7 @@ fun FindInPageBar(
                 )
             }
 
-            // Close Button (✕)
+            // Close Button (?)
             IconButton(onClick = onClose, modifier = Modifier.size(36.dp)) {
                 Icon(
                     Icons.Filled.Close,

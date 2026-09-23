@@ -115,7 +115,7 @@ fun ReadingListSheet(
                     EmptyListState(
                         icon = Icons.Filled.BookmarkBorder,
                         title = "No saved articles",
-                        subtitle = "Tap the menu → Reading List to save pages for later"
+                        subtitle = "Tap the menu ? Reading List to save pages for later"
                     )
                 }
             } else {

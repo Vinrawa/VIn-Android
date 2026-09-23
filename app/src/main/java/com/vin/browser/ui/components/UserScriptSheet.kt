@@ -180,7 +180,7 @@ private fun UserScriptRow(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    if (script.isCss) "CSS" else "JavaScript" + (script.domain?.let { " · $it" } ?: " · Global"),
+                    if (script.isCss) "CSS" else "JavaScript" + (script.domain?.let { " ? $it" } ?: " ? Global"),
                     color = scheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 1

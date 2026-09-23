@@ -1,21 +1,27 @@
 package com.vin.browser.adblock
 
 import android.graphics.Bitmap
+import android.net.Uri
 import android.net.http.SslCertificate
 import android.net.http.SslError
 import android.webkit.*
+import com.vin.browser.data.UserScript
 import com.vin.browser.engine.BackgroundAudioEngine
+import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.net.URL
 
 class VinWebViewClient(
     private val engine: AdBlockEngine = AdBlockEngine.instance,
     private val isBackgroundPlayEnabled: () -> Boolean = { false },
+    private val isHttpsUpgradeEnabled: () -> Boolean = { false },
+    private val userScriptsProvider: () -> List<UserScript> = { emptyList() },
     private val onStatsUpdated: (PageStats) -> Unit = {},
     private val onResourceBlocked: (url: String, siteHost: String) -> Unit = { _, _ -> },
     private val onPageStartedCallback: (url: String) -> Unit = {},
     private val onPageFinishedCallback: (title: String, url: String, cert: SslCertificate?, icon: Bitmap?) -> Unit = { _, _, _, _ -> },
-    private val onPopupBlocked: (url: String) -> Unit = {}
+    private val onPopupBlocked: (url: String) -> Unit = {},
+    private val onExternalScheme: (Uri) -> Unit = {}
 ) : WebViewClient() {
 
     private var currentStats = PageStats()
@@ -24,14 +30,46 @@ class VinWebViewClient(
     override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
         val uri = request?.url ?: return super.shouldOverrideUrlLoading(view, request)
         val host = uri.host?.lowercase() ?: ""
-        // Popup / redirect blocker: cancels navigations to known popunder &
-        // redirect-ad networks while leaving same-site navigation untouched.
+        val isMainFrame = request.isForMainFrame
+
+        // 1. Scheme gate: only web schemes navigate inside the browser. Everything
+        //    else is handed to the host (mailto:, tel:, intent:, market:, geo: ...)
+        //    or cancelled -- never silently loaded by the WebView renderer.
+        if (isMainFrame && !isWebScheme(uri)) {
+            onExternalScheme(uri)
+            return true // consumed externally or cancelled
+        }
+
+        // 2. Popup / redirect blocker: cancels navigations to known popunder &
+        //    redirect-ad networks while leaving same-site navigation untouched.
         if (host.isNotEmpty() && engine.shouldBlockPopup(uri.toString(), host, currentPageHost)) {
             onPopupBlocked(uri.toString())
             return true // cancel navigation
         }
 
+        // 3. HTTPS-up-Grade: main-frame http:// navigations are rewritten to https://
+        //    (except local/private hosts where no TLS exists). This makes the
+        //    previously-dead "HTTPS upgrade" setting real.
+        if (isMainFrame && isHttpsUpgradeEnabled() && uri.scheme.equals("http", ignoreCase = true)) {
+            val h = host
+            val isLocal = h.isEmpty() || h == "localhost" || h == "127.0.0.1" ||
+                h.startsWith("192.168.") || h.startsWith("10.") || h.startsWith("172.16.") ||
+                h.endsWith(".local") || h.endsWith(".internal")
+            if (!isLocal) {
+                val secure = Uri.parse(uri.toString()).buildUpon().scheme("https").build()
+                view?.loadUrl(secure.toString())
+                return true
+            }
+        }
+
         return super.shouldOverrideUrlLoading(view, request)
+    }
+
+    /** http/https/about/blob are web schemes; everything else is external. */
+    private fun isWebScheme(uri: Uri): Boolean {
+        val scheme = uri.scheme?.lowercase() ?: return true // relative/opaque -> let WebView decide
+        return scheme == "http" || scheme == "https" || scheme == "about" ||
+            scheme == "blob" || scheme == "data"
     }
 
     override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -43,6 +81,9 @@ class VinWebViewClient(
         if (view != null && isBackgroundPlayEnabled()) {
             BackgroundAudioEngine.inject(view, true)
         }
+
+        // 2. Userscripts (JS) injected as early as WebView allows
+        injectUserScripts(view, css = false)
 
         url?.let { onPageStartedCallback(it) }
     }
@@ -75,8 +116,12 @@ class VinWebViewClient(
         val reqHost = uri.host?.lowercase() ?: return super.shouldInterceptRequest(view, request)
         val reqUrl = uri.toString()
 
-        // 1. Instant Fast Path for media chunks, video decoders & CDN static assets
-        if (reqHost.endsWith(".googlevideo.com") || reqHost.endsWith(".ytimg.com") || reqHost.endsWith(".ggpht.com")) {
+        // Instant fast path for video segments only (googlevideo serves both YouTube
+        // content and its CDN traffic; scanning it buys nothing since YouTube ads
+        // cannot be network-distinguished anyway). ytimg/ggpht thumbnails and ad
+        // creatives are cheap to scan thanks to the domain/literal index, so they
+        // are no longer exempted from the engine.
+        if (reqHost.endsWith(".googlevideo.com")) {
             return super.shouldInterceptRequest(view, request)
         }
 
@@ -86,7 +131,7 @@ class VinWebViewClient(
 
         return if (result != null) {
             onResourceBlocked(reqUrl, currentPageHost)
-            // Empty 200 OK body — prevents sites from retrying aggressively on 403/404
+            // Empty 200 OK body -- prevents sites from retrying aggressively on 403/404
             WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(ByteArray(0)))
         } else {
             super.shouldInterceptRequest(view, request)
@@ -106,10 +151,13 @@ class VinWebViewClient(
             CleanPage.inject(view, engine.getCosmeticSelectors(currentPageHost))
         }
 
-        // YouTube distraction / ad killer
+        // YouTube distraction / ad killer (also fixes stretched video geometry)
         if (currentPageHost.contains("youtube.com")) {
             YouTubeFocus.inject(view, YouTubeFocusSettings.default())
         }
+
+        // CSS userscripts land at page finish (styling is not time-critical)
+        injectUserScripts(view, css = true)
 
         // Re-inject visibility spoofing on page finish
         if (isBackgroundPlayEnabled()) {
@@ -117,6 +165,39 @@ class VinWebViewClient(
         }
 
         onPageFinishedCallback(title, finalUrl, cert, icon)
+    }
+
+    /**
+     * Userscript injection: enabled scripts whose domain filter is null (global) or
+     * matches the current page host (exact or subdomain) run against the page.
+     * JS is evaluated at onPageStarted (closest WebView equivalent to document-start);
+     * CSS is turned into a <style> tag at onPageFinished.
+     */
+    private fun injectUserScripts(view: WebView?, css: Boolean) {
+        if (view == null || currentPageHost.isBlank()) return
+        val scripts = runCatching { userScriptsProvider() }.getOrNull() ?: return
+        if (scripts.isEmpty()) return
+        scripts.filter { it.isEnabled && it.isCss == css }.forEach { script ->
+            val domain = script.domain?.trim()?.lowercase()
+            val applies = domain.isNullOrBlank() ||
+                currentPageHost == domain ||
+                currentPageHost.endsWith(".$domain")
+            if (!applies) return@forEach
+            try {
+                if (css) {
+                    val styleJs = "(function(){try{" +
+                        "var s=document.createElement('style');" +
+                        "s.setAttribute('data-vin-userscript','1');" +
+                        "s.textContent=" + JSONObject.quote(script.code) + ";" +
+                        "(document.head||document.documentElement).appendChild(s);" +
+                        "}catch(e){}})();"
+                    view.evaluateJavascript(styleJs, null)
+                } else {
+                    val wrapped = "(function(){try{\n" + script.code + "\n}catch(e){}})();"
+                    view.evaluateJavascript(wrapped, null)
+                }
+            } catch (_: Exception) { }
+        }
     }
 
     /**
@@ -219,7 +300,7 @@ class VinWebViewClient(
                 </style>
             </head>
             <body>
-                <div class="icon">⚠️</div>
+                <div class="icon">[WARN]</div>
                 <h1>Unable to load page</h1>
                 <p>${escapeHtml(errorDescription)}</p>
                 <button class="btn" onclick="location.href='${escapeHtml(failingUrl)}'">Try Again</button>

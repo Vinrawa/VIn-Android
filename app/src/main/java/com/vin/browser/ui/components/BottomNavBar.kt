@@ -57,10 +57,10 @@ fun BottomNavBar(
                     onDragStart = { totalDragOffset = 0f },
                     onDragEnd = {
                         if (totalDragOffset > dragThreshold) {
-                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK )
                             onSwipePrevTab()
                         } else if (totalDragOffset < -dragThreshold) {
-                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+                            view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK )
                             onSwipeNextTab()
                         }
                         totalDragOffset = 0f
@@ -144,7 +144,7 @@ fun BottomNavBar(
                 }
             }
 
-            // 5. Menu Button (≡)
+            // 5. Menu Button (?)
             NavBarIconButton(
                 icon = Icons.Filled.Menu,
                 contentDescription = "Menu",

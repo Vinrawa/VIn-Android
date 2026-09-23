@@ -22,7 +22,7 @@ object VinTheme {
         @Composable @ReadOnlyComposable get() = LocalVinColors.current
 }
 
-// AMOLED Black color scheme — pure black surfaces for OLED screens
+// AMOLED Black color scheme -- pure black surfaces for OLED screens
 private val AmoledDarkColors = darkColorScheme(
     primary = Color(0xFF3B82F6),
     onPrimary = Color.White,
@@ -49,7 +49,7 @@ private val AmoledDarkColors = darkColorScheme(
     outlineVariant = Color(0xFF333333),
 )
 
-// Sepia color scheme — warm tones for comfortable reading
+// Sepia color scheme -- warm tones for comfortable reading
 private val SepiaColors = lightColorScheme(
     primary = Color(0xFF8B6914),
     onPrimary = Color.White,

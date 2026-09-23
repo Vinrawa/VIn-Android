@@ -254,7 +254,7 @@ fun DoctorDiagnosticSheet(
                             Spacer(Modifier.height(6.dp))
                             autoTuneResult.optimizationsApplied.forEach { action ->
                                 Text(
-                                    text = "• " + action,
+                                    text = "* " + action,
                                     color = Color(0xFFA7F3D0),
                                     fontSize = 11.sp
                                 )

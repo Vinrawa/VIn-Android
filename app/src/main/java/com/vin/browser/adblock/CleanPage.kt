@@ -4,7 +4,7 @@ import android.webkit.WebView
 
 object CleanPage {
 
-    // Curated selectors for common cookie/consent/newsletter patterns — extend
+    // Curated selectors for common cookie/consent/newsletter patterns -- extend
     // this from a maintained cosmetic filter list over time, it's a starting set
     private val knownSelectors = listOf(
         "[class*='cookie-banner']",
@@ -67,7 +67,7 @@ object CleanPage {
 
     /**
      * Injects the cosmetic filter layer into the page.
-     * [cosmeticSelectors] are EasyList element-hiding selectors for this domain —
+     * [cosmeticSelectors] are EasyList element-hiding selectors for this domain --
      * they go into a persistent <style> tag so late-loading elements are hidden
      * automatically without any observer overhead.
      */

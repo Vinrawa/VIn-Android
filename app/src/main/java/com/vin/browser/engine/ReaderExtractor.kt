@@ -28,7 +28,7 @@ object ReaderExtractor {
     return JSON.stringify({ title: document.title || '', byline: location.hostname || '', paragraphs: [] });
   }
   var clone = root.cloneNode(true);
-  var junk = clone.querySelectorAll('script,style,noscript,nav,header,footer,aside,iframe,form,button');
+  var junk = clone.querySelectorAll('script,style,noscript,nav,header,footer,aside,iframe,fo rm,button');
   for (var j = 0; j < junk.length; j++) {
     if (junk[j].parentNode) junk[j].parentNode.removeChild(junk[j]);
   }
@@ -68,7 +68,7 @@ object ReaderExtractor {
         webView.evaluateJavascript(EXTRACT_JS) { raw ->
             var article: ReaderArticle? = null
             try {
-                // evaluateJavascript returns the JS string result JSON-quoted — unwrap it first
+                // evaluateJavascript returns the JS string result JSON-quoted -- unwrap it first
                 val unquoted = JSONTokener(raw).nextValue().toString()
                 val obj = JSONObject(unquoted)
                 val arr = obj.getJSONArray("paragraphs")

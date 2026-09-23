@@ -145,6 +145,20 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     private val _isCryptoBlock = MutableStateFlow(storage.isCryptoBlockEnabled())
     val isCryptoBlock: StateFlow<Boolean> = _isCryptoBlock.asStateFlow()
 
+    // Remote suggestion privacy toggle (keystrokes leave the device only when enabled)
+    private val _isRemoteSuggestions = MutableStateFlow(storage.isRemoteSuggestionsEnabled())
+    val isRemoteSuggestions: StateFlow<Boolean> = _isRemoteSuggestions.asStateFlow()
+
+    fun toggleRemoteSuggestions() {
+        val newVal = !_isRemoteSuggestions.value
+        _isRemoteSuggestions.value = newVal
+        storage.setRemoteSuggestionsEnabled(newVal)
+        if (!newVal) {
+            suggestionJob?.cancel()
+            _suggestions.value = emptyList()
+        }
+    }
+
     fun toggleGlobalAdBlock() {
         val newVal = !_isGlobalAdBlock.value
         _isGlobalAdBlock.value = newVal
@@ -205,10 +219,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     private val commonTlds = setOf("com", "org", "net", "edu", "gov", "io", "co", "in", "app", "dev", "ai", "me", "xyz", "info", "tech", "site", "online", "tv", "cc")
 
-    // Engines whose privacy stance should route suggestion lookups through DDG
-    private val privacySuggestionEngines = setOf("duckduckgo", "brave", "searxng", "startpage", "marginalia")
-
-    // Bang shortcut → target engine (search is routed through that engine for this query only)
+    // Bang shortcut ? target engine (search is routed through that engine for this query only)
     private val engineBangs = mapOf(
         "g" to "google",
         "d" to "duckduckgo",
@@ -218,9 +229,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         "br" to "brave"
     )
 
-    // Bang shortcut → (home URL, "%s" search URL template)
+    // Bang shortcut ? (home URL, "%s" search URL template)
     private val urlBangs = mapOf(
-        "yt" to ("https://m.youtube.com" to "https://m.youtube.com/results?search_query=%s"),
+        "yt" to ("https://m.youtube.com" to "https://m.youtube.com/results?search_query=%s") ,
         "w" to ("https://www.wikipedia.org" to "https://en.wikipedia.org/w/index.php?search=%s"),
         "wiki" to ("https://www.wikipedia.org" to "https://en.wikipedia.org/w/index.php?search=%s"),
         "gh" to ("https://github.com" to "https://github.com/search?q=%s"),
@@ -253,7 +264,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         if (q.isEmpty()) return
         _suggestions.value = emptyList()
 
-        // 0. Bang shortcuts ("!yt cats", "!g phones") — unknown bangs fall through
+        // 0. Bang shortcuts ("!yt cats", "!g phones") -- unknown bangs fall through
         if (handleBangSearch(q)) return
 
         // 1. Check if direct URL (e.g. "youtube.com", "https://chess.com", "localhost:8080")
@@ -306,7 +317,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             return true
         }
 
-        return false // Unknown bang → normal search of the whole string
+        return false // Unknown bang ? normal search of the whole string
     }
 
     private fun routeQueryThroughEngine(q: String) {
@@ -318,7 +329,11 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
             searchJob = viewModelScope.launch {
                 try {
-                    val results = SearchProviders.executeSearch(q, "all")
+                    val results = SearchProviders.executeSearch(
+                        q, "all",
+                        localHistory = storage.getHistory(),
+                        localBookmarks = storage.getBookmarks()
+                    )
                     _searchResults.value = results
                 } catch (_: Exception) {
                     _searchResults.value = emptyList()
@@ -352,11 +367,13 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             .map { SuggestionItem(value = it.second, label = it.first.ifBlank { it.second }, isHistory = true) }
         _suggestions.value = historyItems
 
+        // Keystrokes only leave the device when the user kept remote suggestions on
+        if (!storage.isRemoteSuggestionsEnabled()) return
+
         suggestionJob = viewModelScope.launch {
             delay(250)
-            val isPrivacyEngine = _selectedEngineId.value in privacySuggestionEngines
             val network = try {
-                SearchProviders.suggest(q, isPrivacyEngine)
+                SearchProviders.suggest(q)
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -597,7 +614,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
      * tab is real), so hibernation releases favicon/thumbnail bitmaps only. Once the
      * tab count reaches 10, inactive tabs beyond the active tab + last 7 in list order
      * (approximate recency) drop their favicon and preview bitmap. Hibernated tabs
-     * wake on switchTab(); incognito tabs need nothing extra — closing the last one
+     * wake on switchTab(); incognito tabs need nothing extra -- closing the last one
      * wipes session data anyway.
      */
     private fun hibernateExcessTabs() {
@@ -639,7 +656,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
             val nextId = remaining[maxOf(0, minOf(idx, remaining.size - 1))].id
             switchTab(nextId)
         }
-        // Last incognito tab just closed → wipe session cookies + cache traces
+        // Last incognito tab just closed ? wipe session cookies + cache traces
         if (closingTab.isIncognito && remaining.none { it.isIncognito }) {
             wipeIncognitoData()
         }
@@ -647,7 +664,7 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
 
     /**
      * Clears traces left by incognito browsing once the last incognito tab is gone:
-     * session cookies (not all cookies — that would log out normal tabs) plus the
+     * session cookies (not all cookies -- that would log out normal tabs) plus the
      * WebView disk cache directories. Runs off the main thread where possible.
      */
     private fun wipeIncognitoData() {
@@ -679,20 +696,24 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         updateActiveTab(url = url, isLoading = true)
     }
 
-    fun onPageFinished(title: String, url: String, certificate: SslCertificate?, favicon: Bitmap?) {
+    fun onPageFinished(title: String, url: String, cert: SslCertificate?, favicon: Bitmap?, isPrivate: Boolean) {
         BrowserDoctor.instance.recordPageFinished(url)
         _doctorMetrics.value = BrowserDoctor.instance.getLiveMetrics(_tabs.value.size, _isBackgroundPlay.value)
         _webViewUrl.value = url
         val domain = extractDomain(url)
         _currentDomain.value = domain
-        _trustInfo.value = TrustEvaluator.evaluate(url, certificate)
+        _trustInfo.value = TrustEvaluator.evaluate(url, certificate = cert)
         _trackersBlocked.value = AdBlockEngine.instance.getSiteBlockedCount(domain)
         val resolvedTitle = if (title.isNotBlank()) title else domain
         updateActiveTab(title = resolvedTitle, url = url, isLoading = false, isHome = false, favicon = favicon)
 
-        // Record history on page finish for all legitimate web navigations & in-page link clicks
-        val activeTabIsIncognito = getActiveTab()?.isIncognito == true
-        if (!activeTabIsIncognito && url.isNotBlank() && !url.startsWith("vin://") && !url.startsWith("about:")) {
+        // Record history on page finish for legitimate web navigations & in-page link clicks.
+        // [isPrivate] is captured by the WebView that fired the event -- NOT by whichever
+        // tab happens to be active when the callback arrives (single live WebView means a
+        // fast tab switch used to race here and leak incognito visits into history).
+        val safeUrl = url.isNotBlank() && !url.startsWith("vin://") && !url.startsWith("about:") &&
+            !url.startsWith("data:") && !url.startsWith("blob:") && !url.startsWith("javascript:")
+        if (!isPrivate && safeUrl) {
             viewModelScope.launch(Dispatchers.IO) {
                 storage.addToHistory(resolvedTitle, url)
             }
@@ -732,9 +753,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     // Reading List
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     private val _showReadingList = MutableStateFlow(false)
     val showReadingList: StateFlow<Boolean> = _showReadingList.asStateFlow()
 
@@ -776,9 +797,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         } catch (_: Exception) { }
     }
 
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     // User Scripts
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     private val _showUserScripts = MutableStateFlow(false)
     val showUserScripts: StateFlow<Boolean> = _showUserScripts.asStateFlow()
 
@@ -812,9 +833,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     // Tab Groups
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     private val _tabGroups = MutableStateFlow(storage.getTabGroups())
     val tabGroups: StateFlow<List<TabGroup>> = _tabGroups.asStateFlow()
 
@@ -845,9 +866,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         toClose.forEach { closeTab(it) }
     }
 
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     // Theme
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     private val _themePreset = MutableStateFlow(storage.getThemePreset())
     val themePreset: StateFlow<String> = _themePreset.asStateFlow()
 
@@ -862,18 +883,18 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
         storage.setThemePreset(preset)
     }
 
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     // Cookie Manager
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     private val _showCookieManager = MutableStateFlow(false)
     val showCookieManager: StateFlow<Boolean> = _showCookieManager.asStateFlow()
 
     fun toggleCookieManager() { _showCookieManager.value = !_showCookieManager.value }
     fun dismissCookieManager() { _showCookieManager.value = false }
 
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     // QR Code
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     private val _showQrScanner = MutableStateFlow(false)
     val showQrScanner: StateFlow<Boolean> = _showQrScanner.asStateFlow()
 
@@ -885,9 +906,9 @@ class BrowserViewModel(application: Application) : AndroidViewModel(application)
     fun toggleQrGenerator() { _showQrGenerator.value = !_showQrGenerator.value }
     fun dismissQrGenerator() { _showQrGenerator.value = false }
 
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     // Download Manager
-    // ──────────────────────────────────────────────────────────────
+    // --------------------------------------------------------------
     private val _showDownloadManager = MutableStateFlow(false)
     val showDownloadManager: StateFlow<Boolean> = _showDownloadManager.asStateFlow()
 

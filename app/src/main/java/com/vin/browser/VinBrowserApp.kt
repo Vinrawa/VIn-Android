@@ -11,6 +11,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.vin.browser.adblock.AdBlockEngine
 import com.vin.browser.adblock.FilterListLoader
+import com.vin.browser.adblock.FilterParseResult
 import com.vin.browser.adblock.FilterSyncWorker
 import com.vin.browser.data.StorageService
 import kotlinx.coroutines.CoroutineScope
@@ -38,28 +39,51 @@ class VinBrowserApp : Application() {
 
         scheduleFilterSync()
 
-        // Bootstrap: load bundled asset lists FIRST, then merge any newer synced
-        // lists from filesDir/filterlists (written by FilterSyncWorker) on top.
+        // Bootstrap: assemble the base rule set ONCE and hot-swap it into the engine.
+        // Synced copies (filesDir/filterlists, written by FilterSyncWorker) win over the
+        // bundled assets -- loading both would previously merge the same EasyList twice.
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                assets.open("easylist.txt").bufferedReader().use { reader ->
-                    AdBlockEngine.instance.loadRules(FilterListLoader.parse(reader.readText()))
-                }
-            } catch (_: Exception) { }
+                val syncedDir = File(filesDir, "filterlists")
+                val syncedFiles = syncedDir.listFiles()
+                    ?.filter { it.extension == "txt" }
+                    ?.sortedBy { it.name }
+                    .orEmpty()
 
-            try {
-                assets.open("easyprivacy.txt").bufferedReader().use { reader ->
-                    AdBlockEngine.instance.loadRules(FilterListLoader.parse(reader.readText()))
-                }
-            } catch (_: Exception) { }
+                fun readAsset(name: String): String? = try {
+                    assets.open(name).bufferedReader().use { it.readText() }
+                } catch (_: Exception) { null }
 
-            val syncedDir = File(filesDir, "filterlists")
-            syncedDir.listFiles()?.forEach { file ->
-                if (file.extension != "txt") return@forEach
-                try {
-                    AdBlockEngine.instance.loadRules(FilterListLoader.parse(file.readText()))
-                } catch (_: Exception) { }
-            }
+                fun readFile(file: File): String? = try {
+                    file.readText()
+                } catch (_: Exception) { null }
+
+                val easylist = syncedFiles.firstOrNull { it.name.startsWith("easylist") }
+                    ?.let(::readFile) ?: readAsset("easylist.txt")
+                val easyprivacy = syncedFiles.firstOrNull { it.name.startsWith("easyprivacy") }
+                    ?.let(::readFile) ?: readAsset("easyprivacy.txt")
+                val extras = syncedFiles.filter {
+                    !it.name.startsWith("easylist") && !it.name.startsWith("easyprivacy")
+                }.mapNotNull(::readFile)
+
+                val parseStats = mutableMapOf<String, Int>()
+                val parsed = mutableListOf<FilterParseResult>()
+                easylist?.let { parsed.add(FilterListLoader.parse(it, parseStats)) }
+                easyprivacy?.let { parsed.add(FilterListLoader.parse(it, parseStats)) }
+                extras.forEach { parsed.add(FilterListLoader.parse(it, parseStats)) }
+
+                if (parsed.isNotEmpty()) {
+                    AdBlockEngine.instance.replaceBaseRules(FilterListLoader.merge(parsed))
+                }
+                android.util.Log.i(
+                    "VinBrowserApp",
+                    "Filter lists loaded: ${parseStats["network"] ?: 0} network, " +
+                        "${parseStats["popup"] ?: 0} popup, " +
+                        "${parseStats["networkExceptions"] ?: 0} exceptions, " +
+                        "${parseStats["cosmetic"] ?: 0} cosmetic rules " +
+                        "(${parseStats["networkDropped"] ?: 0} unsupported lines skipped)"
+                )
+            } catch (_: Exception) { }
         }
     }
 

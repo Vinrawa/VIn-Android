@@ -18,7 +18,7 @@ Make the differentiator **remembering useful research and explaining privacy dec
 
 - Save pages, selected quotes, original URLs, and timestamps into topic workspaces.
 - Search locally by words first, with optional on-device semantic search later.
-- Answer “where did I read that?” with exact source passages, not unsupported AI summaries.
+- Answer "where did I read that?" with exact source passages, not unsupported AI summaries.
 - Make saving explicit. Never index incognito pages, password fields, or form input.
 - Store private content using an Android Keystore-backed encryption design. Provide delete/export controls.
 - Acceptance: recover a saved passage offline, verify its source, and verify deletion removes it from both storage and indexes.

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Legacy full-backup rules (pre-API 31). Browsing history, bookmarks, reading
+     list and downloads live in the vin_browser preferences file and must never
+     leave the device unencrypted. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="vin_browser.xml" />
+    <exclude domain="file" path="reading_list" />
+    <exclude domain="file" path="filterlists" />
+</full-backup-content>

@@ -37,7 +37,7 @@ screenshot*.png
 dump.xml
 
 # WhatsApp images (keep only the 2 target refs)
-# WhatsApp Image*.jpeg — keep these as target UI reference
+# WhatsApp Image*.jpeg -- keep these as target UI reference
 
 # Logs
 *.log
